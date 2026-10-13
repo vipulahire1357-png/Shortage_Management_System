@@ -1,0 +1,7 @@
+pandas
+openpyxl
+xlrd
+lxml
+fastapi
+uvicorn[standard]
+python-multipart
