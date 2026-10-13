@@ -304,7 +304,7 @@ export default function App() {
       <div className="brand">
         {sidebarOpen && <>
           <div className="abb-logo">ABB</div>
-          <div><div className="brand-title">Shortage System</div><div className="brand-subtitle">Inventory management</div></div>
+          <div><div className="brand-title">Shortage Management</div></div>
         </>}
         <button className="sidebar-toggle" onClick={() => setSidebarOpen(o => !o)} title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}>
           <Menu size={18} />
