@@ -49,6 +49,8 @@ OUTPUT_COLUMNS = [
     # Retained as supporting fields for sidebar filters; dashboard hides them.
     "Material Ref Code",
     "WBS Element",
+    # Scope classification from scopelist (e.g. 'ABB', 'Vendor Scope').
+    "Scope",
 ]
 
 
@@ -254,13 +256,39 @@ def build_rows(
         if ref_code and wbs:
             wbs_by_ref[ref_code].add(wbs)
 
-    # A material is in-scope only when at least one scope-list row says ABB.
+    # Build a material-to-scope lookup from scopelist.
+    # When a material appears more than once, prefer 'ABB' over 'Vendor Scope'
+    # over any other value (consistent with existing ABB-first business rule).
+    SCOPE_PRIORITY = {"ABB": 0, "VENDOR SCOPE": 1}
+    material_scope: dict[str, str] = {}
+    for row in scope_rows:
+        material = clean_text(row["Material Code"])
+        scope_raw = clean_text(row["Scope"])
+        if not material or not scope_raw:
+            continue
+        scope_upper = normalize_scope(scope_raw)
+        # Only track ABB and Vendor Scope materials; skip Header / Not Required.
+        if scope_upper not in SCOPE_PRIORITY:
+            continue
+        existing = material_scope.get(material)
+        if existing is None:
+            material_scope[material] = scope_raw
+        else:
+            # Keep the higher-priority (lower numeric) scope.
+            if SCOPE_PRIORITY[scope_upper] < SCOPE_PRIORITY.get(
+                normalize_scope(existing), 99
+            ):
+                material_scope[material] = scope_raw
+
+    # Convenience sets for the two supported filter values.
     abb_materials = {
-        clean_text(row["Material Code"])
-        for row in scope_rows
-        if clean_text(row["Material Code"])
-        and normalize_scope(row["Scope"]) == "ABB"
+        m for m, s in material_scope.items() if normalize_scope(s) == "ABB"
     }
+    vendor_materials = {
+        m for m, s in material_scope.items() if normalize_scope(s) == "VENDOR SCOPE"
+    }
+    # All materials that belong to either scope (used for BOM filtering).
+    scoped_materials = abb_materials | vendor_materials
 
     # Aggregate before joining to avoid multiplying stock/orders when a source
     # contains multiple rows for the same WBS + Material Code.
@@ -317,8 +345,8 @@ def build_rows(
         ref_code = row["Material Ref Code"]
         material = row["Material Code"]
 
-        # Enforce both the ABB scope rule and the WBS mapping requirement.
-        if material not in abb_materials:
+        # Enforce scope membership (ABB or Vendor Scope) and WBS mapping.
+        if material not in scoped_materials:
             continue
         mapped_wbs = wbs_by_ref.get(ref_code)
         if not mapped_wbs:
@@ -348,6 +376,7 @@ def build_rows(
         net_shortage = max(bom["req"] - unrestricted, 0.0)
         free_stock = free_stock_totals.get(material, 0.0)
         remarks = ""
+        scope = material_scope.get(material, "")
 
         output.append((
             material,
@@ -362,12 +391,14 @@ def build_rows(
             remarks,
             ref_code,
             wbs,
+            scope,
         ))
 
     if not output:
         raise RuntimeError(
             "No rows qualified for net_shortage. Check that ZPP7 Material "
-            "Ref Codes match wbs_element and that scopelist Scope values contain 'ABB'."
+            "Ref Codes match wbs_element and that scopelist Scope values "
+            "contain 'ABB' or 'Vendor Scope'."
         )
 
     return output
@@ -398,6 +429,7 @@ def write_output(
         "Remarks": "TEXT",
         "Material Ref Code": "TEXT",
         "WBS Element": "TEXT",
+        "Scope": "TEXT",
     }
     definitions = ", ".join(
         f"{quote_identifier(column)} {kind}"

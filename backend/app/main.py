@@ -1,11 +1,15 @@
 
 from contextlib import asynccontextmanager
+import io
 from pathlib import Path
 import subprocess
 import sys
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
 
 from .database import (
     API_COLUMNS,
@@ -54,6 +58,7 @@ def empty_filters():
         "material_ref_code": [],
         "wbs_element": [],
         "material_code": [],
+        "scope": [],
     }
 
 
@@ -229,11 +234,12 @@ def filters():
 
             result = {}
 
-            # Expose strictly these three filters.
+            # Expose strictly these four filters.
             for api_col in (
                 "material_ref_code",
                 "wbs_element",
                 "material_code",
+                "scope",
             ):
                 db_col = quote_identifier(API_TO_DB[api_col])
 
@@ -266,6 +272,7 @@ def get_shortages(
     material_ref_code: str | None = None,
     wbs_element: str | None = None,
     material_code: str | None = None,
+    scope: str | None = None,
     page: int = 1,
     page_size: int = 10,
     sort_by: str = "material_code",
@@ -285,11 +292,12 @@ def get_shortages(
     conditions = []
     values = []
 
-    # Apply only the three supported filters.
+    # Apply the four supported filters.
     for field, value in (
         ("material_ref_code", material_ref_code),
         ("wbs_element", wbs_element),
         ("material_code", material_code),
+        ("scope", scope),
     ):
         if value and value != "All":
             db_col = quote_identifier(API_TO_DB[field])
@@ -372,3 +380,130 @@ def get_shortages(
 
     except RuntimeError:
         return empty_shortages(page, page_size)
+
+
+@app.get("/api/export")
+def export_shortages(
+    material_ref_code: str | None = None,
+    wbs_element: str | None = None,
+    material_code: str | None = None,
+    scope: str | None = None,
+    format: str = "xlsx",
+):
+    """Export filtered net_shortage rows as XLSX or CSV."""
+    conditions = []
+    values = []
+
+    for field, value in (
+        ("material_ref_code", material_ref_code),
+        ("wbs_element", wbs_element),
+        ("material_code", material_code),
+        ("scope", scope),
+    ):
+        if value and value != "All":
+            db_col = quote_identifier(API_TO_DB[field])
+            conditions.append(f"{db_col} = ?")
+            values.append(value)
+
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+
+    try:
+        with connect_services() as conn:
+            table = get_output_table(conn)
+            select_cols = ", ".join(
+                quote_identifier(col) for col in DB_COLUMNS
+            )
+            rows = conn.execute(
+                f"SELECT {select_cols} FROM {table}{where} ORDER BY \"Material Code\"",
+                values,
+            ).fetchall()
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=503,
+            detail="Shortage database not ready. Run report processing first.",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    # Human-readable column headers (same order as DB_COLUMNS).
+    headers = [
+        "Material Ref Code", "WBS Element", "Material Code",
+        "Material Description", "ZPP7 Quantity", "Project Stock Quantity",
+        "PO Quantity", "Open PO Quantity", "PR Quantity",
+        "Net Shortage", "Free Stock", "Remarks", "Scope",
+    ]
+
+    fmt = format.lower().strip()
+
+    # ── CSV ──────────────────────────────────────────────────────────────
+    if fmt == "csv":
+        def escape_csv(v: object) -> str:
+            return '"' + str(v if v is not None else "").replace('"', '""') + '"'
+
+        lines = []
+        lines.append(",".join(escape_csv(h) for h in headers))
+        for row in rows:
+            lines.append(",".join(escape_csv(row[col]) for col in DB_COLUMNS))
+
+        csv_bytes = ("\r\n".join(lines)).encode("utf-8-sig")
+        return StreamingResponse(
+            io.BytesIO(csv_bytes),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="abb-shortage-records.csv"'},
+        )
+
+    # ── XLSX ─────────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Net Shortage"
+
+    # Header row styling.
+    header_fill = PatternFill("solid", fgColor="B5121B")
+    header_font = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+
+    # Data rows.
+    numeric_cols = {
+        "ZPP7 Quantity", "Project Stock Quantity", "PO Quantity",
+        "Open PO Quantity", "PR Quantity", "Net Shortage", "Free Stock",
+    }
+    for row in rows:
+        data_row = []
+        for col in DB_COLUMNS:
+            val = row[col]
+            # Keep numeric columns as numbers, everything else as text.
+            if col in numeric_cols:
+                try:
+                    val = float(val) if val is not None else 0.0
+                except (TypeError, ValueError):
+                    val = 0.0
+            else:
+                val = str(val) if val is not None else ""
+            data_row.append(val)
+        ws.append(data_row)
+
+    # Freeze header row, set reasonable column widths.
+    ws.freeze_panes = "A2"
+    col_widths = [
+        22, 22, 22, 40, 12, 16, 12, 14, 12, 14, 12, 35, 14
+    ]
+    for i, width in enumerate(col_widths, start=1):
+        ws.column_dimensions[
+            openpyxl.utils.get_column_letter(i)
+        ].width = width
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="abb-shortage-records.xlsx"'},
+    )

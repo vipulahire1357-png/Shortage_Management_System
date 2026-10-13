@@ -47,3 +47,14 @@
 .remarks-cancel{background:transparent;border:1px solid #ddd;border-radius:5px;padding:5px 11px;font-size:11px;cursor:pointer;color:#666}
 .remarks-cancel:hover{background:#f5f5f5}
 
+/* ── Export dropdown ── */
+.export-menu{position:relative;display:inline-flex}
+.export-trigger{gap:6px}
+.export-chevron{color:#6b6e77;transition:transform .15s;flex-shrink:0}
+.export-chevron.open{transform:rotate(180deg)}
+.export-dropdown{position:absolute;top:calc(100% + 4px);right:0;z-index:300;min-width:150px;background:#fff;border:1px solid #e0e1e5;border-radius:7px;box-shadow:0 6px 20px #20212412;overflow:hidden}
+.export-option{display:flex;align-items:center;gap:8px;width:100%;padding:9px 13px;border:0;background:transparent;color:#3f4149;font-size:12px;font-weight:500;text-align:left;cursor:pointer;white-space:nowrap}
+.export-option:hover{background:#fafafa;color:#b5121b}
+.export-option svg{flex-shrink:0;color:#888}
+.export-option:hover svg{color:#b5121b}
+

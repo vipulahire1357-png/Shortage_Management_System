@@ -1,7 +1,7 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronLeft,
-  ChevronRight, FileSpreadsheet, Filter, LayoutDashboard,
+  ChevronRight, FileDown, FileSpreadsheet, Filter, LayoutDashboard,
   LoaderCircle, Menu, RefreshCw, Search, UploadCloud, X
 } from "lucide-react";
 
@@ -59,6 +59,49 @@ function Combobox({ value, options, onChange }: {
   );
 }
 
+/* ── Export dropdown menu ── */
+function ExportMenu({ onCsv, onXlsx }: { onCsv: () => void; onXlsx: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function handleKey(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, []);
+
+  return (
+    <div className="export-menu" ref={ref}>
+      <button
+        type="button"
+        className="outline-button export-trigger"
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+      >
+        <FileDown size={15} /> Export <ChevronDown size={12} className={`export-chevron${open ? " open" : ""}`} />
+      </button>
+      {open && (
+        <div className="export-dropdown" role="menu">
+          <button role="menuitem" className="export-option" onMouseDown={() => { setOpen(false); onCsv(); }}>
+            <FileDown size={13} /> CSV (.csv)
+          </button>
+          <button role="menuitem" className="export-option" onMouseDown={() => { setOpen(false); onXlsx(); }}>
+            <FileSpreadsheet size={13} /> Excel (.xlsx)
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Remarks inline-edit cell ── */
 function RemarksCell({ value, onSave }: { value: string; onSave: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
@@ -95,16 +138,17 @@ type Row = {
   material_ref_code: string; wbs_element: string; material_code: string;
   material_description: string; zpp7_quantity: number; project_stock_quantity: number;
   po_quantity: number; open_po_quantity: number; pr_quantity: number;
-  net_shortage: number; free_stock: number; remarks: string;
+  net_shortage: number; free_stock: number; remarks: string; scope: string;
 };
-type Filters = { material_ref_code: string[]; wbs_element: string[]; material_code: string[] };
+type Filters = { material_ref_code: string[]; wbs_element: string[]; material_code: string[]; scope: string[] };
 type Payload = { items: Row[]; total: number; page: number; page_size: number; pages: number;
   summary: { materials: number; net_shortage: number; demand: number } };
 
 const labels: Record<keyof Filters, string> = {
   material_ref_code: "Material Ref Code",
   wbs_element: "WBS Element",
-  material_code: "Material Code"
+  material_code: "Material Code",
+  scope: "Scope",
 };
 const columns: { key: keyof Row; label: string; numeric?: boolean }[] = [
   { key: "material_ref_code", label: "Material Ref Code" },
@@ -129,8 +173,8 @@ function number(value: number | string | undefined) {
 export default function App() {
   const [page, setPage] = useState<"shortage" | "input">("shortage");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [filters, setFilters] = useState<Filters>({ material_ref_code: [], wbs_element: [], material_code: [] });
-  const [selected, setSelected] = useState({ material_ref_code: "All", wbs_element: "All", material_code: "All" });
+  const [filters, setFilters] = useState<Filters>({ material_ref_code: [], wbs_element: [], material_code: [], scope: [] });
+  const [selected, setSelected] = useState({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
   const [payload, setPayload] = useState<Payload | null>(null);
   const [pageNum, setPageNum] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -230,7 +274,7 @@ export default function App() {
       setProcessLog(result.output || result.message || "Processing completed.");
       setUploadMessage(result.message || "Processing completed successfully.");
       await loadFilters();
-      setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All" });
+      setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
       setPageNum(1);
       await loadData();
     } catch (e) { setProcessLog(e instanceof Error ? e.message : "Processing failed."); }
@@ -243,6 +287,16 @@ export default function App() {
     const csv = [header.map(escape).join(","), ...rows.map(r => columns.map(c => escape(r[c.key])).join(","))].join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const a = document.createElement("a"); a.href = url; a.download = "abb-shortage-records.csv"; a.click(); URL.revokeObjectURL(url);
+  }
+  function exportXlsx() {
+    const params = new URLSearchParams({ format: "xlsx" });
+    (Object.keys(selected) as (keyof typeof selected)[]).forEach(k => {
+      if (selected[k] !== "All") params.set(k, selected[k]);
+    });
+    const a = document.createElement("a");
+    a.href = `${API}/export?${params.toString()}`;
+    a.download = "abb-shortage-records.xlsx";
+    a.click();
   }
 
   return <div className={`app-shell${sidebarOpen ? "" : " sidebar-collapsed"}`}>
@@ -266,7 +320,7 @@ export default function App() {
             <span>{labels[key]}</span>
             <Combobox value={selected[key]} options={filters[key] ?? []} onChange={v => updateFilter(key, v)} />
           </label>)}
-          <button className="reset-button" onClick={() => { setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All" }); setPageNum(1); }}><RefreshCw size={14}/> Reset filters</button>
+          <button className="reset-button" onClick={() => { setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" }); setPageNum(1); }}><RefreshCw size={14}/> Reset filters</button>
         </>}
         <div className="sidebar-bottom"><div className="status-dot"/> Local workspace <span className="version">v1.0</span></div>
       </>}
@@ -286,7 +340,7 @@ export default function App() {
 
       {page === "shortage" ? <>
         <section className="table-card">
-          <div className="table-heading"><div><h2>Material shortage register</h2><p>Material-level inventory and procurement position</p></div><div className="table-actions"><button className="outline-button" onClick={exportVisible}><ArrowDown size={15}/> Export CSV</button><button className="primary-button" onClick={() => setPage("input")}><UploadCloud size={16}/> Import data</button></div></div>
+          <div className="table-heading"><div><h2>Material shortage register</h2><p>Material-level inventory and procurement position</p></div><div className="table-actions"><ExportMenu onCsv={exportVisible} onXlsx={exportXlsx} /><button className="primary-button" onClick={() => setPage("input")}><UploadCloud size={16}/> Import data</button></div></div>
           <div className="table-toolbar"><div className="result-count">{loading ? "Loading records…" : `${number(payload?.total)} records`}</div><div className="toolbar-right"><div className="search-box"><Search size={15}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search visible records…"/>{search && <button onClick={() => setSearch("")}><X size={13}/></button>}</div><label className="page-size">Rows <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPageNum(1); }}><option>10</option><option>25</option><option>50</option></select></label></div></div>
           <div className="table-scroll"><table><thead><tr>{columns.map(col => <th key={col.key} className={`${col.numeric ? "numeric" : ""} ${col.key === "remarks" ? "remarks-col" : ""}`}><button className="sort-button" onClick={() => sortBy(col.key)}>{col.label}{sort.by === col.key && (sort.dir === "asc" ? <ArrowUp size={12}/> : <ArrowDown size={12}/>)}</button></th>)}</tr></thead>
             <tbody>{loading ? <tr><td colSpan={columns.length} className="empty-cell"><LoaderCircle className="spin" size={22}/> Loading shortage data…</td></tr> : filteredRows.length === 0 ? <tr><td colSpan={columns.length} className="empty-cell">No records match your filters.</td></tr> : filteredRows.map((row, idx) => <tr key={`${row.material_code}-${row.wbs_element}-${idx}`}>

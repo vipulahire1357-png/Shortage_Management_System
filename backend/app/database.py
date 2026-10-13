@@ -10,12 +10,12 @@ SERVICES_DB = DATA_DIR / "services.db"
 DB_COLUMNS = [
     "Material Ref Code", "WBS Element", "Material Code", "Material Description",
     "ZPP7 Quantity", "Project Stock Quantity", "PO Quantity", "Open PO Quantity",
-    "PR Quantity", "Net Shortage", "Free Stock", "Remarks",
+    "PR Quantity", "Net Shortage", "Free Stock", "Remarks", "Scope",
 ]
 API_COLUMNS = [
     "material_ref_code", "wbs_element", "material_code", "material_description",
     "zpp7_quantity", "project_stock_quantity", "po_quantity", "open_po_quantity",
-    "pr_quantity", "net_shortage", "free_stock", "remarks",
+    "pr_quantity", "net_shortage", "free_stock", "remarks", "scope",
 ]
 DB_TO_API = dict(zip(DB_COLUMNS, API_COLUMNS))
 API_TO_DB = dict(zip(API_COLUMNS, DB_COLUMNS))
