@@ -1,0 +1,120 @@
+name: Build Windows Portable Application
+
+on:
+  push:
+    branches:
+      - packaging/windows-portable
+    paths:
+      - ".github/workflows/build-windows-portable.yml"
+      - "packaging/**"
+      - "frontend/**"
+      - "backend/**"
+      - "parsers/**"
+      - "services/**"
+      - "main.py"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build React frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Assemble portable application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $package = Join-Path $PWD "ABB_Shortage_System"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+
+          # Copy application source and the built React UI. Operational databases
+          # and uploaded SAP reports are deliberately not copied into the release.
+          robocopy $PWD $package /E /R:2 /W:1 /XD .git .venv node_modules build __pycache__ .pytest_cache /XF .env *.pyc *.db
+          if ($LASTEXITCODE -ge 8) { throw "Source copy failed with robocopy exit code $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
+
+          # Bundle the full Windows Python installation and the dependencies
+          # installed above, so the target computer needs neither Python nor Node.
+          $runtime = Join-Path $package "runtime"
+          New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+          robocopy $env:pythonLocation $runtime /E /R:2 /W:1 /XD __pycache__ /XF *.pyc
+          if ($LASTEXITCODE -ge 8) { throw "Python runtime copy failed with robocopy exit code $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
+
+          Copy-Item "packaging/run_portable.bat" (Join-Path $package "run_app.bat") -Force
+          Set-Content -Path (Join-Path $package "PORTABLE_README.txt") -Encoding UTF8 -Value @"
+          ABB Shortage Management System - Portable Windows Package
+
+          1. Extract the complete ZIP to a writable folder (for example, Documents).
+          2. Double-click run_app.bat.
+          3. The application opens in your default browser at http://127.0.0.1:8000.
+          4. Keep the launcher window open while using the application.
+          5. Press a key in the launcher window to stop the backend when finished.
+
+          Python and Node.js do not need to be installed on the target computer.
+          The application requires permission to run local executables and to bind
+          to 127.0.0.1:8000. Company endpoint/security policies may still block it.
+
+          Operational data folders (projects, global, data) are kept beside the
+          application source and are writable. This release intentionally excludes
+          local SQLite databases and SAP report files; add/refresh those through
+          the application's normal workflow.
+          "@
+
+          if (-not (Test-Path (Join-Path $package "frontend/dist/index.html"))) {
+            throw "Frontend build missing: frontend/dist/index.html"
+          }
+          if (-not (Test-Path (Join-Path $package "runtime/python.exe"))) {
+            throw "Bundled Python runtime missing"
+          }
+
+      - name: Smoke-test bundled Python and imports
+        shell: pwsh
+        run: |
+          $python = Join-Path $PWD "ABB_Shortage_System/runtime/python.exe"
+          & $python --version
+          & $python -c "import pandas, openpyxl, xlrd, lxml, fastapi, uvicorn, multipart; print('Runtime imports OK')"
+          if ($LASTEXITCODE -ne 0) { throw "Bundled runtime smoke test failed" }
+
+      - name: Create ZIP package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "ABB_Shortage_System" -DestinationPath "ABB_Shortage_System_Portable_Windows.zip" -CompressionLevel Optimal
+
+      - name: Upload portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ABB_Shortage_System_Portable_Windows
+          path: ABB_Shortage_System_Portable_Windows.zip
+          if-no-files-found: error
+          retention-days: 14
