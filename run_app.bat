@@ -1,128 +1,84 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
+cd /d "%~dp0"
 
-:: ─────────────────────────────────────────────────────────────────────
-:: ABB Shortage Management System — One-Click Launcher
-:: Double-click this file to start the application.
-:: Requirements: Python virtual environment in .venv\  at the project root.
-::               Frontend production build in frontend\dist\.
-:: ─────────────────────────────────────────────────────────────────────
+title ABB Shortage Management System
 
-set "ROOT=%~dp0"
-set "VENV=%ROOT%.venv"
-set "PYTHON=%VENV%\Scripts\python.exe"
-set "UVICORN=%VENV%\Scripts\uvicorn.exe"
-set "DIST=%ROOT%frontend\dist"
+set "PYTHON=%~dp0.venv\Scripts\python.exe"
+set "DIST=%~dp0frontend\dist"
 set "PORT=8000"
-set "APP_URL=http://127.0.0.1:%PORT%"
-set "LOG=%ROOT%logs\app_launcher.log"
+set "URL=http://127.0.0.1:8000"
+set "LOGDIR=%~dp0logs"
+set "LOG=%~dp0logs\app_launcher.log"
 
 echo.
-echo  ╔══════════════════════════════════════════════╗
-echo  ║   ABB Shortage Management System             ║
-echo  ║   Starting application launcher…            ║
-echo  ╚══════════════════════════════════════════════╝
+echo ============================================
+echo    ABB Shortage Management System
+echo    Starting application...
+echo ============================================
 echo.
 
-:: ── 1. Check Python virtual environment ─────────────────────────────
-if not exist "%PYTHON%" (
-    echo  [ERROR] Python virtual environment not found.
-    echo          Expected: %PYTHON%
-    echo.
-    echo  To set up the environment, open a terminal in this folder and run:
-    echo    python -m venv .venv
-    echo    .venv\Scripts\pip install -r requirements.txt
-    echo.
-    pause
-    exit /b 1
-)
+if not exist "%PYTHON%" goto no_python
+if not exist "%DIST%\index.html" goto no_frontend
 
-:: ── 2. Check frontend production build ──────────────────────────────
-if not exist "%DIST%\index.html" (
-    echo  [ERROR] Frontend production build not found.
-    echo          Expected: %DIST%\index.html
-    echo.
-    echo  To build the frontend (requires Node.js on this machine once):
-    echo    cd frontend
-    echo    npm install
-    echo    npm run build
-    echo.
-    pause
-    exit /b 1
-)
+if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
-:: ── 3. Ensure logs directory exists ─────────────────────────────────
-if not exist "%ROOT%logs" mkdir "%ROOT%logs"
+echo Checking whether the application is already running...
+powershell -NoProfile -Command "try { $r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 '%URL%/api/health'; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
 
-:: ── 4. Prevent duplicate backend process on port 8000 ───────────────
-echo  Checking for existing process on port %PORT%…
-for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr ":%PORT% " ^| findstr "LISTEN"') do (
-    set "EXISTING_PID=%%P"
-)
-if defined EXISTING_PID (
-    echo  [INFO] Port %PORT% is already in use (PID: !EXISTING_PID!).
-    echo         Checking if it is a previous ABB app instance…
-    :: Only kill if the process was started from our own .venv python
-    tasklist /fi "pid eq !EXISTING_PID!" 2>nul | findstr /i "python uvicorn" >nul
-    if !errorlevel! == 0 (
-        echo  [INFO] Stopping previous instance (PID: !EXISTING_PID!)…
-        taskkill /pid !EXISTING_PID! /f >nul 2>&1
-        timeout /t 2 /nobreak >nul
-    ) else (
-        echo  [WARN] Port %PORT% is occupied by a different application.
-        echo         Please free port %PORT% and try again.
-        pause
-        exit /b 1
-    )
-)
+if not errorlevel 1 goto open_app
 
-:: ── 5. Start the FastAPI backend ─────────────────────────────────────
-echo  Starting FastAPI backend on %APP_URL% …
-start "ABB-Backend" /min cmd /c ^
-    ""%PYTHON%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %PORT% >> "%LOG%" 2>&1"
+echo Starting FastAPI backend...
+start "ABB Backend" /min cmd.exe /d /c ""%PYTHON%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port %PORT% >> "%LOG%" 2>&1"
 
-:: ── 6. Wait until the API health endpoint responds ──────────────────
-echo  Waiting for backend to be ready…
-set "MAX_WAIT=30"
 set "WAIT=0"
 :wait_loop
 timeout /t 1 /nobreak >nul
+
+powershell -NoProfile -Command "try { $r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 '%URL%/api/health'; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
+
+if not errorlevel 1 goto open_app
+
 set /a WAIT+=1
-curl -s -o nul -w "%%{http_code}" "%APP_URL%/api/health" 2>nul | findstr "200" >nul
-if !errorlevel! == 0 goto :backend_ready
-if !WAIT! GEQ %MAX_WAIT% (
-    echo.
-    echo  [ERROR] Backend did not become ready within %MAX_WAIT% seconds.
-    echo          Check %LOG% for errors.
-    pause
-    exit /b 1
-)
-goto :wait_loop
+if %WAIT% GEQ 40 goto startup_failed
+goto wait_loop
 
-:backend_ready
-echo  [OK] Backend is ready.
+:open_app
 echo.
-
-:: ── 7. Open the application in the default browser ──────────────────
-echo  Opening %APP_URL% in your default browser…
-start "" "%APP_URL%"
-
+echo Application is ready.
+echo Opening browser: %URL%
+start "" "%URL%"
 echo.
-echo  ╔══════════════════════════════════════════════╗
-echo  ║  ABB Shortage Management System is running  ║
-echo  ║  URL : %APP_URL%                    ║
-echo  ║  Log : logs\app_launcher.log               ║
-echo  ║                                              ║
-echo  ║  Close this window to stop the server.      ║
-echo  ╚══════════════════════════════════════════════╝
+echo Keep the backend running while using the application.
+echo Close this launcher window when finished.
+echo Backend log: %LOG%
 echo.
-
-:: Keep console open so closing it terminates the server window via its PID.
-:: The user can close this window when done.
 pause
-echo  Stopping ABB backend…
-for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr ":%PORT% " ^| findstr "LISTEN"') do (
-    taskkill /pid %%P /f >nul 2>&1
-)
-echo  Done. Goodbye.
+goto end
+
+:no_python
+echo ERROR: Python virtual environment not found.
+echo Expected: %PYTHON%
+echo Create the environment and install project dependencies first.
+pause
+goto end
+
+:no_frontend
+echo ERROR: Production frontend build not found.
+echo Expected: %DIST%\index.html
+echo Build the React frontend on the development machine first.
+pause
+goto end
+
+:startup_failed
+echo.
+echo ERROR: Backend did not become ready within 40 seconds.
+echo Check the backend log:
+echo %LOG%
+echo.
+type "%LOG%"
+pause
+goto end
+
+:end
 endlocal
