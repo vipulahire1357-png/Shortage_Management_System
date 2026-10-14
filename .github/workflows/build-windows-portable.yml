@@ -117,8 +117,8 @@ jobs:
               Start-Sleep -Seconds 1
               try {
                 $health = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8019/api/health"
-                $home = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8019/"
-                if ($health.StatusCode -eq 200 -and $home.StatusCode -eq 200) {
+                $homeResponse = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8019/"
+                if ($health.StatusCode -eq 200 -and $homeResponse.StatusCode -eq 200) {
                   $ready = $true
                   break
                 }
