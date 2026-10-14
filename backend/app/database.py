@@ -4,6 +4,8 @@ import sqlite3
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
+PROJECTS_DIR = ROOT / "projects"
+GLOBAL_DIR = ROOT / "global"
 SERVICES_DB = DATA_DIR / "services.db"
 
 # Columns produced by services/shortage_service.py in data/services.db.

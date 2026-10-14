@@ -11,3 +11,19 @@ data/raw/*
 data/*.db
 logs/*.log
 .env
+# SAP source report files (large binary files — store outside source control)
+projects/**/*.xls
+projects/**/*.xlsx
+projects/**/*.xlsm
+projects/**/*.htm
+projects/**/*.html
+projects/**/*.csv
+projects/**/*.txt
+global/*.xls
+global/*.xlsx
+global/*.xlsm
+global/*.htm
+global/*.html
+# Keep the folder structure placeholder files
+!projects/.gitkeep
+!global/.gitkeep

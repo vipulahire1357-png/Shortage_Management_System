@@ -58,3 +58,101 @@
 .export-option svg{flex-shrink:0;color:#888}
 .export-option:hover svg{color:#b5121b}
 
+
+/* ── Export dropdown ── */
+.export-menu{position:relative;display:inline-flex}
+.export-trigger{gap:6px}
+.export-chevron{color:#6b6e77;transition:transform .15s;flex-shrink:0}
+.export-chevron.open{transform:rotate(180deg)}
+.export-dropdown{position:absolute;top:calc(100% + 4px);right:0;z-index:300;min-width:150px;background:#fff;border:1px solid #e0e1e5;border-radius:7px;box-shadow:0 6px 20px #20212412;overflow:hidden}
+.export-option{display:flex;align-items:center;gap:8px;width:100%;padding:9px 13px;border:0;background:transparent;color:#3f4149;font-size:12px;font-weight:500;text-align:left;cursor:pointer;white-space:nowrap}
+.export-option:hover{background:#fafafa;color:#b5121b}
+.export-option svg{flex-shrink:0;color:#888}
+.export-option:hover svg{color:#b5121b}
+
+/* ══════════════════════════════════════════════
+   Input & Imports page layout
+══════════════════════════════════════════════ */
+.input-page{display:grid;grid-template-columns:220px 1fr;gap:18px;align-items:start}
+.input-sidebar{background:#fff;border:1px solid #e5e6e9;border-radius:9px;padding:18px 16px;box-shadow:0 2px 7px #20212404;min-height:280px}
+.input-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.input-sidebar-title{font-family:Manrope,sans-serif;font-size:13px;font-weight:800;margin:0;color:#2a2c31}
+.icon-btn{padding:6px 8px;min-width:0}
+.empty-hint{display:flex;flex-direction:column;align-items:center;gap:10px;color:#99a0aa;font-size:11px;text-align:center;padding:20px 10px;line-height:1.6}
+.empty-hint code{font-size:10px;background:#f3f4f6;padding:2px 5px;border-radius:4px}
+
+/* Project card in list */
+.project-list{display:flex;flex-direction:column;gap:6px}
+.project-card{display:flex;align-items:center;gap:9px;padding:10px 11px;border-radius:7px;border:1px solid #e8e9ec;cursor:pointer;position:relative;transition:background .12s,border-color .12s;background:#fff}
+.project-card:hover{background:#fafbff;border-color:#c8c9cf}
+.project-card-selected{background:#fff7f7;border-color:#e5b5b8}
+.project-card-icon{color:#b5121b;flex-shrink:0}
+.project-card-body{min-width:0;flex:1}
+.project-card-id{font-size:12px;font-weight:700;color:#25272d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-card-meta{font-size:10px;color:#909298;margin-top:2px}
+.project-card-active-bar{position:absolute;left:0;top:6px;bottom:6px;width:3px;background:#b5121b;border-radius:0 3px 3px 0}
+
+/* Detail panel */
+.input-detail{display:flex;flex-direction:column;gap:16px;min-height:360px}
+.no-project-hint{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:13px;min-height:320px;background:#fff;border:1px solid #e5e6e9;border-radius:9px;padding:32px;color:#9ea2ab;text-align:center}
+.no-project-hint h3{font-family:Manrope,sans-serif;font-size:15px;font-weight:800;color:#2e3038;margin:0}
+.no-project-hint p{font-size:12px;color:#86898f;max-width:340px;line-height:1.7;margin:0}
+.detail-header{display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid #e5e6e9;border-radius:9px;padding:16px 20px;box-shadow:0 2px 7px #20212404}
+.detail-project-id{font-family:Manrope,sans-serif;font-size:18px;font-weight:800;color:#24262b;letter-spacing:-.3px;margin-top:3px}
+.missing-alert{align-items:flex-start}
+
+/* Status badges */
+.status-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:20px;font-size:10px;font-weight:700;white-space:nowrap}
+.badge-ok{background:#e8f7ee;color:#1e7a48}
+.badge-miss{background:#fff0f0;color:#b5121b}
+
+/* Files grid */
+.files-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.files-card{padding:18px 18px 14px}
+.files-card-title{display:flex;align-items:center;gap:7px;font-family:Manrope,sans-serif;font-size:13px;font-weight:800;color:#2a2c31;margin-bottom:14px;flex-wrap:wrap}
+.files-card-sub{font-size:10px;font-weight:500;color:#8d8f97;margin-left:2px}
+.files-card-sub code{font-size:9px;background:#f3f4f6;padding:1px 4px;border-radius:3px}
+
+/* Individual file row */
+.file-list{display:flex;flex-direction:column;gap:1px}
+.file-row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f2f2f4}
+.file-row:last-child{border-bottom:0}
+.file-row-left{display:flex;align-items:center;gap:10px;min-width:0}
+.file-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-ok{background:#42bd83}
+.dot-miss{background:#e8505b}
+.file-name{font-size:11px;font-weight:600;color:#333538;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
+.file-missing{color:#c9555c;font-style:italic}
+.file-label{font-size:10px;color:#8e9098;margin-top:1px}
+
+/* Other unrecognised files */
+.other-files{margin-top:10px;padding-top:10px;border-top:1px solid #f0f0f2;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.other-files-label{font-size:10px;color:#999;flex-basis:100%;margin-bottom:2px}
+.other-file-name{font-size:10px;background:#f4f5f7;color:#555;padding:2px 7px;border-radius:4px}
+
+/* Process panel */
+.process-panel{display:flex;align-items:center;justify-content:space-between;gap:20px;background:#fff;border:1px solid #e5e6e9;border-radius:9px;padding:18px 20px;box-shadow:0 2px 7px #20212404;flex-wrap:wrap}
+.process-panel-text{flex:1;min-width:200px}
+.process-title{font-family:Manrope,sans-serif;font-size:14px;font-weight:800;color:#2a2c31;margin-bottom:5px}
+.process-desc{font-size:11px;color:#868890;line-height:1.6}
+.process-desc code{font-size:10px;background:#f3f4f6;padding:1px 4px;border-radius:3px;color:#555}
+.process-btn{padding:11px 20px;font-size:12px;min-width:190px}
+.upload-message{display:flex;align-items:center;gap:8px;font-size:12px;padding:10px 14px;border-radius:7px}
+.success-text{background:#edf9f1;color:#217a4d}
+.error-text{background:#fff0f0;color:#a71c24}
+.process-log{max-height:280px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#202124;color:#f1f1f2;border-radius:7px;padding:12px;font-size:10px;line-height:1.55;margin:0}
+
+/* Upload card used inside files-card */
+.upload-card{background:#fff;border:1px solid #e5e6e9;border-radius:9px;box-shadow:0 2px 7px #20212404}
+.info-note{display:flex;align-items:flex-start;gap:8px;padding:10px;background:#fff8e8;color:#80651f;font-size:10px;line-height:1.5;border-radius:6px}
+.info-note svg{flex-shrink:0}
+.info-note code{font-size:9px;background:#fdf0cc;padding:1px 4px;border-radius:3px}
+
+@media(max-width:1100px){
+  .input-page{grid-template-columns:180px 1fr}
+  .files-grid{grid-template-columns:1fr}
+}
+@media(max-width:760px){
+  .input-page{grid-template-columns:1fr}
+  .input-sidebar{min-height:auto}
+}

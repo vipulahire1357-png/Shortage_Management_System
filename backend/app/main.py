@@ -8,6 +8,7 @@ import sys
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -22,6 +23,7 @@ from .database import (
     connect_services,
     get_output_table,
 )
+from .projects import router as projects_router
 
 
 @asynccontextmanager
@@ -41,11 +43,15 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(projects_router)
 
 
 def quote_identifier(identifier: str) -> str:
@@ -507,3 +513,11 @@ def export_shortages(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="abb-shortage-records.xlsx"'},
     )
+
+
+# ── Serve built React frontend ────────────────────────────────────────────────
+# Mount last so all /api/* routes take precedence.
+# Only mounted if the dist/ folder exists (production build present).
+_DIST = ROOT / "frontend" / "dist"
+if _DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="frontend")
