@@ -59,7 +59,7 @@ jobs:
 
           # Copy application source and the built React UI. Operational databases
           # and uploaded SAP reports are deliberately not copied into the release.
-          robocopy $PWD $package /E /R:2 /W:1 /XD .git .venv node_modules build __pycache__ .pytest_cache /XF .env *.pyc *.db
+          robocopy $PWD $package /E /R:2 /W:1 /XD .git .venv node_modules build __pycache__ .pytest_cache ABB_Shortage_System /XF .env *.pyc *.db
           if ($LASTEXITCODE -ge 8) { throw "Source copy failed with robocopy exit code $LASTEXITCODE" }
           $global:LASTEXITCODE = 0
 
