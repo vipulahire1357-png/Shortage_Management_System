@@ -98,13 +98,42 @@ jobs:
             throw "Bundled Python runtime missing"
           }
 
-      - name: Smoke-test bundled Python and imports
+      - name: Smoke-test bundled Python, API, and frontend
         shell: pwsh
         run: |
-          $python = Join-Path $PWD "ABB_Shortage_System/runtime/python.exe"
+          $ErrorActionPreference = "Stop"
+          $package = Join-Path $PWD "ABB_Shortage_System"
+          $python = Join-Path $package "runtime/python.exe"
           & $python --version
           & $python -c "import pandas, openpyxl, xlrd, lxml, fastapi, uvicorn, multipart; print('Runtime imports OK')"
-          if ($LASTEXITCODE -ne 0) { throw "Bundled runtime smoke test failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Bundled runtime import test failed" }
+
+          $stdout = Join-Path $PWD "portable-smoke.stdout.log"
+          $stderr = Join-Path $PWD "portable-smoke.stderr.log"
+          $proc = Start-Process -FilePath $python -ArgumentList @("-m","uvicorn","backend.app.main:app","--host","127.0.0.1","--port","8019") -WorkingDirectory $package -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              try {
+                $health = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8019/api/health"
+                $home = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8019/"
+                if ($health.StatusCode -eq 200 -and $home.StatusCode -eq 200) {
+                  $ready = $true
+                  break
+                }
+              } catch {}
+              if ($proc.HasExited) { break }
+            }
+            if (-not $ready) {
+              if (Test-Path $stderr) { Get-Content $stderr }
+              if (Test-Path $stdout) { Get-Content $stdout }
+              throw "Packaged backend or frontend smoke test failed."
+            }
+            Write-Host "Packaged API and frontend returned HTTP 200."
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
 
       - name: Create ZIP package
         shell: pwsh
