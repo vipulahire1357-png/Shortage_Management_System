@@ -7,6 +7,7 @@ Inputs:
         - scopelist
         - Storage
         - ME2J
+        - ME2M
         - PR
     data/zpp7_breakdown.db
         - one table per Material Ref Code, plus parser_metadata
@@ -45,11 +46,11 @@ OUTPUT_COLUMNS = [
     "PR Quantity",
     "Net Shortage",
     "Free Stock",
+    "Vendor Detail",
     "Remarks",
     # Retained as supporting fields for sidebar filters; dashboard hides them.
     "Material Ref Code",
     "WBS Element",
-    # Scope classification from scopelist (e.g. 'ABB', 'Vendor Scope').
     "Scope",
 ]
 
@@ -68,10 +69,7 @@ def list_tables(connection: sqlite3.Connection) -> dict[str, str]:
     return {str(row[0]).casefold(): str(row[0]) for row in rows}
 
 
-def resolve_table(
-    connection: sqlite3.Connection,
-    requested_name: str,
-) -> str:
+def resolve_table(connection: sqlite3.Connection, requested_name: str) -> str:
     """Resolve a table name case-insensitively or raise a useful error."""
     tables = list_tables(connection)
     actual_name = tables.get(requested_name.casefold())
@@ -85,8 +83,7 @@ def resolve_table(
 
 
 def table_columns(
-    connection: sqlite3.Connection,
-    table_name: str,
+    connection: sqlite3.Connection, table_name: str
 ) -> dict[str, str]:
     """Return a case-insensitive map of column names to actual names."""
     rows = connection.execute(
@@ -147,8 +144,6 @@ def to_number(value: Any, *, context: str) -> float:
     if not text:
         return 0.0
 
-    # Source parsers store quantities as text. Remove standard thousands
-    # separators and accept ordinary decimal quantities.
     text = text.replace(",", "").replace(" ", "")
     try:
         return float(text)
@@ -159,21 +154,11 @@ def to_number(value: Any, *, context: str) -> float:
 
 
 def read_zpp7_rows(db_path: Path) -> list[dict[str, Any]]:
-    """
-    Read material rows from each ZPP7 reference table.
-
-    Tables are identified by their columns, not by hardcoded reference codes,
-    so new Material Ref Codes can be handled without editing this service.
-    """
+    """Read material rows from each ZPP7 reference table."""
     if not db_path.is_file():
         raise FileNotFoundError(f"ZPP7 database not found: {db_path}")
 
-    required = [
-        "Material Ref Code",
-        "Material Code",
-        "Material Description",
-        "Req",
-    ]
+    required = ["Material Ref Code", "Material Code", "Material Description", "Req"]
     extracted: list[dict[str, Any]] = []
 
     with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
@@ -198,9 +183,7 @@ def read_zpp7_rows(db_path: Path) -> list[dict[str, Any]]:
                 extracted.append({
                     "Material Ref Code": ref_code,
                     "Material Code": material_code,
-                    "Material Description": clean_text(
-                        row["Material Description"]
-                    ),
+                    "Material Description": clean_text(row["Material Description"]),
                     "Req Quantity": to_number(
                         row["Req"],
                         context=f"ZPP7 table {table_name!r}, material {material_code!r}",
@@ -211,7 +194,6 @@ def read_zpp7_rows(db_path: Path) -> list[dict[str, Any]]:
         raise RuntimeError(
             f"No ZPP7 material tables with the required columns were found in {db_path}."
         )
-
     return extracted
 
 
@@ -228,25 +210,34 @@ def build_rows(
         scope_table = resolve_table(conn, "scopelist")
         storage_table = resolve_table(conn, "Storage")
         me2j_table = resolve_table(conn, "ME2J")
+        me2m_table = resolve_table(conn, "ME2M")
+        pr_table = resolve_table(conn, "PR")
 
-        wbs_rows = read_table(
-            conn, wbs_table, ["Material Ref Code", "WBS Element"]
-        )
-        scope_rows = read_table(
-            conn, scope_table, ["Material Code", "Scope"]
-        )
+        wbs_rows = read_table(conn, wbs_table, ["Material Ref Code", "WBS Element"])
+        scope_rows = read_table(conn, scope_table, ["Material Code", "Scope"])
         storage_rows = read_table(
-            conn, storage_table,
-            ["Material Code", "Unrestricted", "WBS Element"],
+            conn, storage_table, ["Material Code", "Unrestricted", "WBS Element"]
         )
         me2j_rows = read_table(
             conn, me2j_table,
             ["Material Code", "Order Quantity", "Open Quantity", "WBS Element"],
         )
-        pr_table = resolve_table(conn, "PR")
+        me2m_rows = read_table(
+            conn, me2m_table, ["Material Code", "Vendor Detail"]
+        )
         pr_rows = read_table(
             conn, pr_table, ["Material Code", "PR Quantity", "WBS Element"]
         )
+
+    # Map each material to its distinct non-empty vendor details. If ME2M has
+    # multiple entries for one material, retain all distinct details without
+    # duplicating net-shortage rows.
+    vendor_details: dict[str, set[str]] = defaultdict(set)
+    for row in me2m_rows:
+        material = clean_text(row["Material Code"])
+        vendor = clean_text(row["Vendor Detail"])
+        if material and vendor:
+            vendor_details[material].add(vendor)
 
     # One Material Ref Code may theoretically map to multiple WBS elements.
     wbs_by_ref: dict[str, set[str]] = defaultdict(set)
@@ -256,10 +247,8 @@ def build_rows(
         if ref_code and wbs:
             wbs_by_ref[ref_code].add(wbs)
 
-    # Build a material-to-scope lookup from scopelist.
-    # When a material appears more than once, prefer 'ABB' over 'Vendor Scope'
-    # over any other value (consistent with existing ABB-first business rule).
-    SCOPE_PRIORITY = {"ABB": 0, "VENDOR SCOPE": 1}
+    # Build a material-to-scope lookup, preferring ABB over Vendor Scope.
+    scope_priority = {"ABB": 0, "VENDOR SCOPE": 1}
     material_scope: dict[str, str] = {}
     for row in scope_rows:
         material = clean_text(row["Material Code"])
@@ -267,49 +256,31 @@ def build_rows(
         if not material or not scope_raw:
             continue
         scope_upper = normalize_scope(scope_raw)
-        # Only track ABB and Vendor Scope materials; skip Header / Not Required.
-        if scope_upper not in SCOPE_PRIORITY:
+        if scope_upper not in scope_priority:
             continue
         existing = material_scope.get(material)
-        if existing is None:
+        if existing is None or scope_priority[scope_upper] < scope_priority.get(
+            normalize_scope(existing), 99
+        ):
             material_scope[material] = scope_raw
-        else:
-            # Keep the higher-priority (lower numeric) scope.
-            if SCOPE_PRIORITY[scope_upper] < SCOPE_PRIORITY.get(
-                normalize_scope(existing), 99
-            ):
-                material_scope[material] = scope_raw
 
-    # Convenience sets for the two supported filter values.
-    abb_materials = {
-        m for m, s in material_scope.items() if normalize_scope(s) == "ABB"
-    }
-    vendor_materials = {
-        m for m, s in material_scope.items() if normalize_scope(s) == "VENDOR SCOPE"
-    }
-    # All materials that belong to either scope (used for BOM filtering).
-    scoped_materials = abb_materials | vendor_materials
+    scoped_materials = set(material_scope)
 
-    # Aggregate before joining to avoid multiplying stock/orders when a source
-    # contains multiple rows for the same WBS + Material Code.
     storage_totals: dict[tuple[str, str], float] = defaultdict(float)
     free_stock_totals: dict[str, float] = defaultdict(float)
     for row in storage_rows:
         wbs = clean_text(row["WBS Element"])
         material = clean_text(row["Material Code"])
-        unrestricted_qty = to_number(
+        qty = to_number(
             row["Unrestricted"],
             context=f"Storage, WBS {wbs!r}, material {material!r}",
         )
         if wbs and material:
-            storage_totals[(wbs, material)] += unrestricted_qty
+            storage_totals[(wbs, material)] += qty
         elif not wbs and material:
-            # Free stock is unrestricted MB52/Storage stock not assigned to a WBS.
-            free_stock_totals[material] += unrestricted_qty
+            free_stock_totals[material] += qty
 
-    order_totals: dict[tuple[str, str], list[float]] = defaultdict(
-        lambda: [0.0, 0.0]
-    )
+    order_totals: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
     for row in me2j_rows:
         wbs = clean_text(row["WBS Element"])
         material = clean_text(row["Material Code"])
@@ -324,8 +295,6 @@ def build_rows(
                 context=f"ME2J Open Quantity, WBS {wbs!r}, material {material!r}",
             )
 
-    # Aggregate PR quantities by WBS Element + Material Code before joining.
-    # A material can have multiple requisition rows, so sum them at the join grain.
     pr_totals: dict[tuple[str, str], float] = defaultdict(float)
     for row in pr_rows:
         wbs = clean_text(row["WBS Element"])
@@ -337,15 +306,10 @@ def build_rows(
             )
 
     zpp7_rows = read_zpp7_rows(zpp7_db_path)
-
-    # Aggregate repeated ZPP7 occurrences to the intended output grain:
-    # Material Ref Code + WBS Element + Material Code.
     bom_totals: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in zpp7_rows:
         ref_code = row["Material Ref Code"]
         material = row["Material Code"]
-
-        # Enforce scope membership (ABB or Vendor Scope) and WBS mapping.
         if material not in scoped_materials:
             continue
         mapped_wbs = wbs_by_ref.get(ref_code)
@@ -355,16 +319,9 @@ def build_rows(
         for wbs in sorted(mapped_wbs):
             key = (ref_code, wbs, material)
             if key not in bom_totals:
-                bom_totals[key] = {
-                    "description": row["Material Description"],
-                    "req": 0.0,
-                }
-            elif (
-                not bom_totals[key]["description"]
-                and row["Material Description"]
-            ):
+                bom_totals[key] = {"description": row["Material Description"], "req": 0.0}
+            elif not bom_totals[key]["description"] and row["Material Description"]:
                 bom_totals[key]["description"] = row["Material Description"]
-
             bom_totals[key]["req"] += row["Req Quantity"]
 
     output: list[tuple[Any, ...]] = []
@@ -372,9 +329,9 @@ def build_rows(
         unrestricted = storage_totals.get((wbs, material), 0.0)
         order_qty, open_qty = order_totals.get((wbs, material), [0.0, 0.0])
         pr_qty = pr_totals.get((wbs, material), 0.0)
-
         net_shortage = max(bom["req"] - unrestricted, 0.0)
         free_stock = free_stock_totals.get(material, 0.0)
+        vendor_detail = " | ".join(sorted(vendor_details.get(material, set())))
         remarks = ""
         scope = material_scope.get(material, "")
 
@@ -388,6 +345,7 @@ def build_rows(
             pr_qty,
             net_shortage,
             free_stock,
+            vendor_detail or None,
             remarks,
             ref_code,
             wbs,
@@ -400,7 +358,6 @@ def build_rows(
             "Ref Codes match wbs_element and that scopelist Scope values "
             "contain 'ABB' or 'Vendor Scope'."
         )
-
     return output
 
 
@@ -408,12 +365,7 @@ def write_output(
     rows: list[tuple[Any, ...]],
     db_path: Path = SERVICES_DB_PATH,
 ) -> None:
-    """
-    Atomically refresh net_shortage.
-
-    This table is derived output, so it is rebuilt from the source databases.
-    Existing unrelated tables in services.db are preserved.
-    """
+    """Atomically refresh net_shortage, preserving unrelated tables."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     expected_types = {
@@ -426,6 +378,7 @@ def write_output(
         "PR Quantity": "REAL",
         "Net Shortage": "REAL",
         "Free Stock": "REAL",
+        "Vendor Detail": "TEXT",
         "Remarks": "TEXT",
         "Material Ref Code": "TEXT",
         "WBS Element": "TEXT",
@@ -435,35 +388,27 @@ def write_output(
         f"{quote_identifier(column)} {kind}"
         for column, kind in expected_types.items()
     )
-    quoted_columns = ", ".join(
-        quote_identifier(column) for column in OUTPUT_COLUMNS
-    )
+    quoted_columns = ", ".join(quote_identifier(column) for column in OUTPUT_COLUMNS)
     placeholders = ", ".join("?" for _ in OUTPUT_COLUMNS)
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA busy_timeout = 5000")
-
-        # Stage the new output in a temporary table within a transaction.
-        # If insertion fails, rollback leaves the existing output untouched.
         with conn:
             conn.execute(
                 f"DROP TABLE IF EXISTS {quote_identifier('_netshortage_table_new')}"
             )
             conn.execute(
-                f"CREATE TABLE {quote_identifier('_netshortage_table_new')} "
-                f"({definitions})"
+                f"CREATE TABLE {quote_identifier('_netshortage_table_new')} ({definitions})"
             )
             conn.executemany(
                 f"INSERT INTO {quote_identifier('_netshortage_table_new')} "
                 f"({quoted_columns}) VALUES ({placeholders})",
                 rows,
             )
-
             tables = list_tables(conn)
             old_table = tables.get(OUTPUT_TABLE.casefold())
             if old_table is not None:
                 conn.execute(f"DROP TABLE {quote_identifier(old_table)}")
-
             conn.execute(
                 f"ALTER TABLE {quote_identifier('_netshortage_table_new')} "
                 f"RENAME TO {quote_identifier(OUTPUT_TABLE)}"
@@ -481,18 +426,16 @@ def main() -> int:
         rows = build_rows(GLOBAL_DB_PATH, ZPP7_DB_PATH)
         write_output(rows, SERVICES_DB_PATH)
 
-        print(f"\nRows written: {len(rows)}")
+        print(f"\\nRows written: {len(rows)}")
         print(f"Output table: {OUTPUT_TABLE}")
-        print("\nPreview:")
+        print("\\nPreview:")
         with sqlite3.connect(SERVICES_DB_PATH) as conn:
             preview = conn.execute(
                 f"SELECT * FROM {quote_identifier(OUTPUT_TABLE)} LIMIT 10"
             ).fetchall()
             for row in preview:
                 print(row)
-
         return 0
-
     except Exception as error:
         print(f"Shortage service failed: {error}", file=sys.stderr)
         return 1
