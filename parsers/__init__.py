@@ -7,6 +7,7 @@ PARSER_MODULES = {
     "mb25": "mb25_parser",
     "mb52": "mb52_parser",
     "me2j": "me2j_parser",
+    "me2m": "me2m_parser",
     "pr": "pr_parser",
     "scopelist": "scopelist_parser",
     "zpp7": "zpp7_parser",
@@ -40,8 +41,6 @@ def run_parser(name: str):
 
     result = entrypoint()
 
-    # A non-zero integer return code indicates failure.
-    # None and 0 are treated as successful completion.
     if isinstance(result, int) and not isinstance(result, bool) and result != 0:
         raise RuntimeError(
             f"Parser '{normalized}' returned failure code {result}."
@@ -61,15 +60,9 @@ def run_all_parsers() -> dict:
 
         try:
             result = run_parser(name)
-            results[name] = {
-                "status": "SUCCESS",
-                "result": result,
-            }
+            results[name] = {"status": "SUCCESS", "result": result}
         except Exception as error:
-            results[name] = {
-                "status": "FAILED",
-                "error": str(error),
-            }
+            results[name] = {"status": "FAILED", "error": str(error)}
             print(f"{name.upper()} parser failed: {error}")
 
     return results
