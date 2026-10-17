@@ -104,17 +104,27 @@ global/**/*.txt
 global/**/*.tsv
 global/**/*.pdf
 
-# Generated Material Shortage Register exports
-# Keep the output directory but ignore generated project workbooks.
-Material Shortage Registers/*
-!Material Shortage Registers/.gitkeep
-!Material Shortage Registers/README.md
+# Generated Material Shortage Register Excel files
+# Ignore workbook files only; allow directories, placeholders, and documentation.
+Material Shortage Registers/*.xls
+Material Shortage Registers/*.xlsx
+Material Shortage Registers/*.xlsm
+Material Shortage Registers/*.xlsb
+Material Shortage Registers/**/*.xls
+Material Shortage Registers/**/*.xlsx
+Material Shortage Registers/**/*.xlsm
+Material Shortage Registers/**/*.xlsb
 
-# Generated Vendor Registers and vendor-facing Excel workbooks
-# These may contain operational supplier information.
-Vendor Registers/*
-!Vendor Registers/.gitkeep
-!Vendor Registers/README.md
+# Generated Vendor Registers and vendor-facing Excel files
+# Ignore workbook files only; preserve vendor and workflow folder structure.
+Vendor Registers/*.xls
+Vendor Registers/*.xlsx
+Vendor Registers/*.xlsm
+Vendor Registers/*.xlsb
+Vendor Registers/**/*.xls
+Vendor Registers/**/*.xlsx
+Vendor Registers/**/*.xlsm
+Vendor Registers/**/*.xlsb
 
 # Microsoft Excel temporary/lock files
 ~$*.xls*
