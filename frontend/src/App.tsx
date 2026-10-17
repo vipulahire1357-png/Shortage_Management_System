@@ -398,12 +398,13 @@ function ProjectCard({
    Input & Imports page (receives shared project state)
 ═══════════════════════════════════════════════════════════ */
 function InputPage({
-  selectedProject, setSelectedProject, projects, onRefreshProjects,
+  selectedProject, setSelectedProject, projects, onRefreshProjects, onProcessSuccess,
 }: {
   selectedProject: string;
   setSelectedProject: (id: string) => void;
   projects: string[];
   onRefreshProjects: () => Promise<void>;
+  onProcessSuccess?: () => void;
 }) {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [filesData, setFilesData] = useState<ProjectFilesResponse | null>(null);
@@ -471,6 +472,10 @@ function InputPage({
       if (!res.ok) throw new Error(result.detail || "Processing failed.");
       setProcessSuccess(result.message || "Processing completed successfully.");
       setProcessLog(result.output || "");
+      // Auto-navigate to Material Shortage Register after successful processing
+      if (onProcessSuccess) {
+        setTimeout(() => onProcessSuccess(), 1500);
+      }
     } catch (e) {
       setProcessError(e instanceof Error ? e.message : "Processing failed.");
     } finally { setProcessing(false); }
@@ -1554,10 +1559,12 @@ export default function App() {
 
   /* ── Data loaders ── */
   const loadFilters = useCallback(async () => {
-    const res = await fetch(`${API}/filters`);
+    const params = new URLSearchParams();
+    if (selectedProject) params.set("project_id", selectedProject);
+    const res = await fetch(`${API}/filters?${params}`);
     if (!res.ok) throw new Error("Could not load filter values.");
     setFilters(await res.json());
-  }, []);
+  }, [selectedProject]);
 
   const loadData = useCallback(async () => {
     setLoading(true); setError("");
@@ -1566,6 +1573,7 @@ export default function App() {
         page: String(pageNum), page_size: String(pageSize),
         sort_by: sort.by, sort_dir: sort.dir,
       });
+      if (selectedProject) params.set("project_id", selectedProject);
       (Object.keys(selected) as (keyof typeof selected)[])
         .forEach(k => { if (selected[k] !== "All") params.set(k, selected[k]); });
       const res = await fetch(`${API}/shortages?${params}`);
@@ -1574,7 +1582,7 @@ export default function App() {
     } catch {
       setError("Cannot connect to the backend. Start FastAPI on http://127.0.0.1:8000 and refresh.");
     } finally { setLoading(false); }
-  }, [selected, pageNum, pageSize, sort]);
+  }, [selected, pageNum, pageSize, sort, selectedProject]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -1862,6 +1870,7 @@ export default function App() {
             setSelectedProject={setSelectedProject}
             projects={projects}
             onRefreshProjects={loadProjects}
+            onProcessSuccess={() => setPage("shortage")}
           />
         ) : (
           /* ── Vendor Track page with sub-nav ── */
