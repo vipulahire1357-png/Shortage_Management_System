@@ -210,11 +210,9 @@ def read_register_to_vendor_track_rows(
         except (ValueError, TypeError):
             qty = 0.0
 
-        # Split multiple vendors (e.g. "Vendor A | Vendor B" or "Vendor A / Vendor B")
-        parts = re.split(r"\s*(?:\||/)\s*", raw_vendor)
-        vendors = sorted({v.strip() for v in parts if v.strip()})
-        if not vendors and raw_vendor:
-            vendors = [raw_vendor]
+        # Vendor Detail is one ME2M vendor per shortage row. Do not split on
+        # slash/pipe: those characters can be part of a legitimate vendor name.
+        vendors = [raw_vendor] if raw_vendor else []
 
         for vendor in vendors:
             # Check if this item already had dates preserved in vendor_track

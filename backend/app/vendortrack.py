@@ -26,6 +26,7 @@ from services.vendor_import_service import (
     discover_vendor_response_files,
     preview_vendor_response,
     apply_vendor_response,
+    export_proposed_response,
     get_import_history,
 )
 
@@ -400,6 +401,17 @@ class VendorImportApplyModel(BaseModel):
     file_path: str
 
 
+def _is_allowed_vendor_file(file_path: Path) -> bool:
+    resolved = file_path.resolve()
+    for root in (VENDOR_REGISTERS_DIR, VENDOR_DATE_REGISTERS_DIR):
+        try:
+            resolved.relative_to(root.resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 @router.get("/import/discover")
 def discover_import_files():
     """
@@ -430,9 +442,7 @@ def preview_import_file(body: VendorImportApplyModel):
         raise HTTPException(status_code=404, detail=f"File not found: {file_path.name}")
 
     # Security: ensure path is within allowed directories
-    resolved = file_path.resolve()
-    allowed_roots = [VENDOR_REGISTERS_DIR.resolve(), VENDOR_DATE_REGISTERS_DIR.resolve()]
-    if not any(str(resolved).startswith(str(root)) for root in allowed_roots):
+    if not _is_allowed_vendor_file(file_path):
         raise HTTPException(
             status_code=403,
             detail="File is outside the allowed Vendor Registers directories.",
@@ -457,9 +467,7 @@ def apply_import_file(body: VendorImportApplyModel):
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {file_path.name}")
 
-    resolved = file_path.resolve()
-    allowed_roots = [VENDOR_REGISTERS_DIR.resolve(), VENDOR_DATE_REGISTERS_DIR.resolve()]
-    if not any(str(resolved).startswith(str(root)) for root in allowed_roots):
+    if not _is_allowed_vendor_file(file_path):
         raise HTTPException(
             status_code=403,
             detail="File is outside the allowed Vendor Registers directories.",
@@ -472,6 +480,25 @@ def apply_import_file(body: VendorImportApplyModel):
             registers_dir=SHORTAGE_REGISTERS_DIR,
         )
         return result
+    except (ValueError, FileNotFoundError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/import/export-proposals")
+def export_proposed_dates(body: VendorImportApplyModel):
+    """Export only counteroffer rows back to the vendor's outgoing folder."""
+    file_path = Path(body.file_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path.name}")
+    if not _is_allowed_vendor_file(file_path):
+        raise HTTPException(
+            status_code=403,
+            detail="File is outside the allowed Vendor Registers directories.",
+        )
+    try:
+        return export_proposed_response(file_path, vendor_registers_dir=VENDOR_REGISTERS_DIR)
     except (ValueError, FileNotFoundError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as exc:

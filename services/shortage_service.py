@@ -47,12 +47,12 @@ OUTPUT_COLUMNS = [
     "Net Shortage",
     "Free Stock",
     "Vendor Detail",
+    "Final Date",
     "Remarks",
     # Retained as supporting fields for sidebar filters; dashboard hides them.
     "Material Ref Code",
     "WBS Element",
     "Scope",
-    "Final Date",
 ]
 
 # Columns written during build_rows (excludes project_id which is added at write time)
@@ -131,11 +131,15 @@ def read_table(
     connection: sqlite3.Connection,
     table_name: str,
     columns: list[str],
+    *,
+    order_by_rowid: bool = False,
 ) -> list[dict[str, Any]]:
     """Read selected columns into dictionaries using actual database names."""
     resolved = resolve_columns(connection, table_name, columns)
     sql_columns = ", ".join(quote_identifier(resolved[c]) for c in columns)
     sql = f"SELECT {sql_columns} FROM {quote_identifier(table_name)}"
+    if order_by_rowid:
+        sql += " ORDER BY rowid"
     cursor = connection.execute(sql)
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -150,6 +154,26 @@ def clean_text(value: Any) -> str:
 def normalize_scope(value: Any) -> str:
     """Normalize scope for exact ABB matching."""
     return clean_text(value).upper()
+
+
+def resolve_material_vendor(me2m_vendors: list[str]) -> tuple[str | None, bool]:
+    """Return the first ME2M Vendor Detail for a material key.
+
+    Preserve the ME2M report order when a material appears more than once and
+    return one value only. The bool indicates that the material had multiple
+    distinct ME2M values; it does not prevent the material-key lookup.
+    """
+    unique_vendors: list[str] = []
+    seen: set[str] = set()
+    for value in me2m_vendors:
+        vendor = " ".join(clean_text(value).split())
+        identity = vendor.casefold()
+        if vendor and identity not in seen:
+            seen.add(identity)
+            unique_vendors.append(vendor)
+    if not unique_vendors:
+        return None, False
+    return unique_vendors[0], len(unique_vendors) > 1
 
 
 def to_number(value: Any, *, context: str) -> float:
@@ -242,21 +266,22 @@ def build_rows(
             ["Material Code", "Order Quantity", "Open Quantity", "WBS Element"],
         )
         me2m_rows = read_table(
-            conn, me2m_table, ["Material Code", "Vendor Detail"]
+            conn, me2m_table, ["Material Code", "Vendor Detail"],
+            order_by_rowid=True,
         )
         pr_rows = read_table(
             conn, pr_table, ["Material Code", "PR Quantity", "WBS Element"]
         )
 
-    # Map each material to its distinct non-empty vendor details. If ME2M has
-    # multiple entries for one material, retain all distinct details without
-    # duplicating net-shortage rows.
-    vendor_details: dict[str, set[str]] = defaultdict(set)
+    # Vendor Detail comes exclusively from ME2M, keyed only by Material Code.
+    # Preserve report order so repeated ME2M rows resolve consistently to the
+    # first non-empty value rather than creating a multi-vendor shortage row.
+    vendor_details: dict[str, list[str]] = defaultdict(list)
     for row in me2m_rows:
         material = clean_text(row["Material Code"])
         vendor = clean_text(row["Vendor Detail"])
         if material and vendor:
-            vendor_details[material].add(vendor)
+            vendor_details[material].append(vendor)
 
     # One Material Ref Code may theoretically map to multiple WBS elements.
     wbs_by_ref: dict[str, set[str]] = defaultdict(set)
@@ -343,36 +368,22 @@ def build_rows(
                 bom_totals[key]["description"] = row["Material Description"]
             bom_totals[key]["req"] += row["Req Quantity"]
 
-    # ── One-vendor-per-row enforcement (§3.1) ──────────────────────────────
-    # Validate that each material maps to at most one vendor.
-    # If a material has multiple distinct vendors in ME2M, report a
-    # data-quality error listing the affected materials and vendors.
-    multi_vendor_conflicts: list[str] = []
-    for mat_code, vendors_set in sorted(vendor_details.items()):
-        if len(vendors_set) > 1:
-            multi_vendor_conflicts.append(
-                f"  Material {mat_code!r}: {sorted(vendors_set)}"
-            )
-
-    if multi_vendor_conflicts:
-        raise ValueError(
-            f"One-vendor-per-row violation: {len(multi_vendor_conflicts)} material(s) "
-            f"have multiple conflicting vendors in ME2M data.\n"
-            + "\n".join(multi_vendor_conflicts[:20])
-            + (f"\n  ... and {len(multi_vendor_conflicts) - 20} more"
-               if len(multi_vendor_conflicts) > 20 else "")
-        )
-
     output: list[tuple[Any, ...]] = []
+    missing_vendor_rows = 0
+    multiple_me2m_vendor_rows = 0
     for (ref_code, wbs, material), bom in sorted(bom_totals.items()):
         unrestricted = storage_totals.get((wbs, material), 0.0)
         order_qty, open_qty = order_totals.get((wbs, material), [0.0, 0.0])
         pr_qty = pr_totals.get((wbs, material), 0.0)
         net_shortage = max(bom["req"] - unrestricted, 0.0)
         free_stock = free_stock_totals.get(material, 0.0)
-        # Single vendor per material (validated above)
-        material_vendors = vendor_details.get(material, set())
-        vendor_detail = next(iter(material_vendors)) if material_vendors else None
+        vendor_detail, has_vendor_conflict = resolve_material_vendor(
+            vendor_details.get(material, [])
+        )
+        if has_vendor_conflict:
+            multiple_me2m_vendor_rows += 1
+        if vendor_detail is None:
+            missing_vendor_rows += 1
         remarks = ""
         scope = material_scope.get(material, "")
 
@@ -399,31 +410,39 @@ def build_rows(
             "Ref Codes match wbs_element and that scopelist Scope values "
             "contain 'ABB' or 'Vendor Scope'."
         )
+    if missing_vendor_rows or multiple_me2m_vendor_rows:
+        print(
+            f"ME2M material-key mapping: {missing_vendor_rows} shortage row(s) "
+            "have no matching ME2M Vendor Detail; "
+            f"{multiple_me2m_vendor_rows} row(s) have multiple distinct ME2M "
+            "values and use the first value in report order. Shortage calculation continues.",
+            file=sys.stderr,
+        )
     return output
 
 
 def _ensure_net_shortage_schema(conn: sqlite3.Connection) -> None:
-    """Create or migrate the net_shortage table to include project_id and Final Date."""
+    """Create/migrate net_shortage with Final Date immediately before Remarks."""
+    expected_types = {
+        "project_id": "TEXT",
+        "Material Code": "TEXT",
+        "Material Description": "TEXT",
+        "ZPP7 Quantity": "REAL",
+        "Project Stock Quantity": "REAL",
+        "PO Quantity": "REAL",
+        "Open PO Quantity": "REAL",
+        "PR Quantity": "REAL",
+        "Net Shortage": "REAL",
+        "Free Stock": "REAL",
+        "Vendor Detail": "TEXT",
+        "Final Date": "TEXT",
+        "Remarks": "TEXT",
+        "Material Ref Code": "TEXT",
+        "WBS Element": "TEXT",
+        "Scope": "TEXT",
+    }
     tables = list_tables(conn)
     if OUTPUT_TABLE.casefold() not in tables:
-        expected_types = {
-            "project_id": "TEXT",
-            "Material Code": "TEXT",
-            "Material Description": "TEXT",
-            "ZPP7 Quantity": "REAL",
-            "Project Stock Quantity": "REAL",
-            "PO Quantity": "REAL",
-            "Open PO Quantity": "REAL",
-            "PR Quantity": "REAL",
-            "Net Shortage": "REAL",
-            "Free Stock": "REAL",
-            "Vendor Detail": "TEXT",
-            "Remarks": "TEXT",
-            "Material Ref Code": "TEXT",
-            "WBS Element": "TEXT",
-            "Scope": "TEXT",
-            "Final Date": "TEXT",
-        }
         definitions = ", ".join(
             f"{quote_identifier(col)} {kind}"
             for col, kind in expected_types.items()
@@ -433,14 +452,54 @@ def _ensure_net_shortage_schema(conn: sqlite3.Connection) -> None:
         )
         return
 
-    # Table exists — ensure required columns are present
-    actual = table_columns(conn, tables[OUTPUT_TABLE.casefold()])
-    for col in ("project_id", "Final Date"):
-        if col.casefold() not in actual:
-            conn.execute(
-                f'ALTER TABLE {quote_identifier(OUTPUT_TABLE)} '
-                f'ADD COLUMN {quote_identifier(col)} TEXT'
-            )
+    # Rebuild old schemas transactionally so Final Date can move before
+    # Remarks. Copy all known and any legacy extra columns to preserve data.
+    actual_table = tables[OUTPUT_TABLE.casefold()]
+    actual_info = conn.execute(
+        f"PRAGMA table_info({quote_identifier(actual_table)})"
+    ).fetchall()
+    actual_names = [str(row[1]) for row in actual_info]
+    expected_names = list(expected_types)
+    extra_types = {
+        str(row[1]): (str(row[2]) or "TEXT")
+        for row in actual_info
+        if str(row[1]).casefold() not in {name.casefold() for name in expected_names}
+    }
+    schema_types = {**expected_types, **extra_types}
+    if actual_names == list(schema_types):
+        return
+
+    new_table = f"{OUTPUT_TABLE}__ordered"
+    conn.execute(f"DROP TABLE IF EXISTS {quote_identifier(new_table)}")
+    definitions = ", ".join(
+        f"{quote_identifier(col)} {kind}"
+        for col, kind in schema_types.items()
+    )
+    conn.execute(
+        f"CREATE TABLE {quote_identifier(new_table)} ({definitions})"
+    )
+    actual_by_folded = {name.casefold(): name for name in actual_names}
+    columns_to_copy = [
+        (name, actual_by_folded[name.casefold()])
+        for name in schema_types
+        if name.casefold() in actual_by_folded
+    ]
+    if columns_to_copy:
+        target_columns = ", ".join(
+            quote_identifier(target) for target, _ in columns_to_copy
+        )
+        source_columns = ", ".join(
+            quote_identifier(source) for _, source in columns_to_copy
+        )
+        conn.execute(
+            f"INSERT INTO {quote_identifier(new_table)} ({target_columns}) "
+            f"SELECT {source_columns} FROM {quote_identifier(actual_table)}"
+        )
+    conn.execute(f"DROP TABLE {quote_identifier(actual_table)}")
+    conn.execute(
+        f"ALTER TABLE {quote_identifier(new_table)} "
+        f"RENAME TO {quote_identifier(OUTPUT_TABLE)}"
+    )
 
 
 def write_output(
@@ -458,8 +517,10 @@ def write_output(
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # BUILD_COLUMNS matches the tuple structure from build_rows()
-    all_columns = ["project_id"] + list(BUILD_COLUMNS) + ["Final Date"]
+    # Keep the physical SQLite order aligned with the UI/export column order.
+    all_columns = ["project_id"] + list(OUTPUT_COLUMNS)
+    # BUILD_COLUMNS is the tuple contract returned by build_rows().
+    build_column_indexes = {name: index for index, name in enumerate(BUILD_COLUMNS)}
     quoted_columns = ", ".join(quote_identifier(c) for c in all_columns)
     placeholders = ", ".join("?" for _ in all_columns)
 
@@ -505,8 +566,16 @@ def write_output(
                 final_date = existing_dates.get(
                     (ref_code, wbs, material), ""
                 )
+                values_by_column = {
+                    name: row[index]
+                    for name, index in build_column_indexes.items()
+                }
+                values_by_column["Final Date"] = final_date
                 insert_rows.append(
-                    (project_id,) + tuple(row) + (final_date,)
+                    tuple(
+                        project_id if col == "project_id" else values_by_column[col]
+                        for col in all_columns
+                    )
                 )
 
             if insert_rows:

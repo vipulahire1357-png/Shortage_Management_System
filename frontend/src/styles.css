@@ -163,6 +163,57 @@
   .input-sidebar{min-height:auto}
 }
 
+/* Independent, collapsible page workspaces */
+.workspace-toggle{margin-left:auto;min-width:32px;min-height:30px}
+.input-page-sidebar-collapsed{grid-template-columns:52px minmax(0,1fr)}
+.input-page-sidebar-collapsed .input-sidebar-title,
+.input-page-sidebar-collapsed .input-sidebar .icon-btn{display:none}
+.input-page-sidebar-collapsed .input-sidebar{padding:8px;min-width:0}
+.input-page-sidebar-collapsed .input-section-head{justify-content:center}
+.shortage-workspace{display:grid;grid-template-columns:250px minmax(0,1fr);gap:16px;height:calc(100vh - 164px);min-height:420px}
+.shortage-workspace-collapsed{grid-template-columns:48px minmax(0,1fr)}
+.shortage-workspace-sidebar{display:flex;flex-direction:column;min-width:0;overflow:auto;background:#fff;border:1px solid #e5e6e9;border-radius:9px;box-shadow:0 2px 7px #20212404}
+.workspace-sidebar-heading{display:flex;align-items:center;justify-content:space-between;min-height:44px;padding:7px 12px;border-bottom:1px solid #f0f0f2;color:#777a84;font-size:10px;letter-spacing:1px}
+.workspace-sidebar-toggle{display:inline-flex;align-items:center;justify-content:center;min-width:30px;min-height:30px;border:1px solid #e2e3e6;border-radius:6px;background:#fff;color:#60636b}
+.workspace-sidebar-toggle:hover{background:#f5f6f8;color:#b5121b}
+.shortage-workspace-collapsed .workspace-sidebar-heading{justify-content:center;padding:6px}
+.workspace-sidebar-section{padding:13px;border-bottom:1px solid #f0f0f2}
+.workspace-sidebar-label{display:flex;align-items:center;gap:6px;margin-bottom:8px;color:#898a90;font-size:10px;letter-spacing:1px;font-weight:700}
+.workspace-refresh{margin:0 0 8px;padding:6px 8px;color:#646770;border-color:#e2e3e6}
+.workspace-project-list{display:flex;flex-direction:column;gap:4px;max-height:260px;overflow:auto}
+.workspace-project-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px;border:1px solid transparent;border-radius:6px;background:#fff;color:#444750;text-align:left;font-size:11px}
+.workspace-project-item:hover{background:#f7f8fa;border-color:#e8e9ec}
+.workspace-project-item.selected{background:#fff4f4;border-color:#e8b8bb;color:#a31119;font-weight:700}
+.workspace-project-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspace-empty{padding:10px 2px;color:#92949b;font-size:11px}
+.shortage-workspace-main{display:flex;flex-direction:column;gap:10px;min-width:0;min-height:0}
+.shortage-workspace-main>.table-card{display:flex;flex:1;flex-direction:column;min-height:0}
+.shortage-workspace-main>.table-card .table-scroll{flex:1;min-height:0;max-height:none}
+.shortage-workspace-main>.upload-message,.shortage-workspace-main>.footnote{flex-shrink:0}
+.nav-submenu{display:flex;flex-direction:column;gap:3px;margin:-1px 0 7px 22px;padding-left:11px;border-left:1px solid #45464a}
+.nav-subitem{display:flex;align-items:center;gap:9px;width:100%;padding:9px 10px;border:0;border-radius:6px;background:transparent;color:#bfc0c5;text-align:left;font-size:12px}
+.nav-subitem:hover{background:#2d2e33;color:#fff}
+.nav-subitem.active{background:#3b292b;color:#fff;box-shadow:inset 2px 0 #ed1c24}
+.nav-subitem.active svg{color:#ff646a}
+.sidebar-sub-icons{display:flex;flex-direction:column;gap:3px;margin-top:-5px;padding-left:4px;border-left:1px solid #45464a}
+.nav-sub-icon{display:grid;place-items:center;width:38px;height:34px;border:0;border-radius:7px;background:transparent;color:#bfc0c5}
+.nav-sub-icon:hover{background:#2d2e33;color:#fff}
+.nav-sub-icon.active{background:#3b292b;color:#ff646a;box-shadow:inset 2px 0 #ed1c24}
+.vt-page.vt-page-sidebar-collapsed{grid-template-columns:48px minmax(0,1fr)}
+.vt-page-sidebar-collapsed>.vt-sidebar{align-items:center;padding:8px 5px}
+.vt-local-sidebar-toggle{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;min-height:30px;margin-bottom:7px;border:1px solid #e2e3e6;border-radius:6px;background:#fff;color:#5e6169;font-size:10px}
+.vt-page-sidebar-collapsed .vt-local-sidebar-toggle{width:32px}
+.response-vendor-group{margin-bottom:9px}
+.response-vendor-heading{display:flex;align-items:center;gap:5px;margin:6px 2px;color:#6c6f77;font-size:10px;font-weight:700}
+.date-cell{font-variant-numeric:tabular-nums}
+
+@media(max-width:760px){
+  .shortage-workspace{grid-template-columns:1fr;height:auto}
+  .shortage-workspace-sidebar{max-height:280px}
+  .vt-page{grid-template-columns:190px minmax(0,1fr)}
+  .vt-page.vt-page-sidebar-collapsed{display:grid;grid-template-columns:44px minmax(0,1fr);height:100%;overflow:hidden}
+}
+
 /* ══════════════════════════════════════════════
    Vendor Track page & Viewport Containment
 ══════════════════════════════════════════════ */

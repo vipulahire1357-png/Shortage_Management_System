@@ -331,8 +331,8 @@ const columns: { key: keyof Row; label: string; numeric?: boolean }[] = [
   { key: "net_shortage", label: "Net Shortage", numeric: true },
   { key: "free_stock", label: "Free Stock", numeric: true },
   { key: "vendor_detail", label: "Vendor Detail" },
-  { key: "remarks", label: "Remarks" },
   { key: "final_date", label: "Final Date" },
+  { key: "remarks", label: "Remarks" },
 ];
 const fmt = (v: number | string | undefined) => {
   const n = Number(v ?? 0);
@@ -416,6 +416,7 @@ function InputPage({
   const [processSuccess, setProcessSuccess] = useState("");
   const [exportingReg, setExportingReg] = useState(false);
   const [exportRegSuccess, setExportRegSuccess] = useState("");
+  const [projectSidebarOpen, setProjectSidebarOpen] = useState(true);
 
   const refreshProjects = async () => {
     setLoadingProjects(true);
@@ -485,18 +486,22 @@ function InputPage({
   const availableCount = filesData ? filesData.project_files.filter(f => f.available).length : 0;
 
   return (
-    <div className="input-page">
+    <div className={`input-page${projectSidebarOpen ? "" : " input-page-sidebar-collapsed"}`}>
       {/* ── Left: project list sidebar ─────────────────── */}
       <div className="input-sidebar">
         <div className="input-section-head">
           <h2 className="input-sidebar-title">Projects</h2>
+          <button className="sidebar-toggle workspace-toggle" onClick={() => setProjectSidebarOpen(o => !o)}
+            title={projectSidebarOpen ? "Collapse project list" : "Expand project list"}>
+            <Menu size={16} />
+          </button>
           <button className="outline-button icon-btn" onClick={refreshProjects}
             title="Refresh project list">
             <RefreshCw size={13} className={loadingProjects ? "spin" : ""} />
           </button>
         </div>
 
-        {loadingProjects ? (
+        {projectSidebarOpen && (loadingProjects ? (
           <div className="empty-hint"><LoaderCircle size={16} className="spin" /> Refreshing…</div>
         ) : projects.length === 0 ? (
           <div className="empty-hint">
@@ -512,7 +517,7 @@ function InputPage({
                 onSelect={() => select(id)} />
             ))}
           </div>
-        )}
+        ))}
       </div>
 
       {/* ── Right: detail ──────────────────────────────── */}
@@ -685,9 +690,10 @@ interface PreviewItem {
   vendor_date: string;
   proposed_date: string;
   final_date: string;
-  current_final_date: string;
   matched: boolean;
-  status: "MATCHED" | "MATCHED_NEW_DATE" | "UNMATCHED";
+  ambiguous: boolean;
+  status: "";
+  workbook_values: Record<string, string>;
 }
 interface PreviewResult {
   filename: string;
@@ -695,6 +701,9 @@ interface PreviewResult {
   matched_rows: number;
   unmatched_rows: number;
   changed_dates_count: number;
+  proposed_dates_count: number;
+  ambiguous_rows: number;
+  headers: string[];
   items: PreviewItem[];
 }
 interface ImportHistory {
@@ -709,13 +718,16 @@ interface ImportHistory {
    Vendor Track Import page
 ═══════════════════════════════════════════════════════════ */
 function VendorImportPage() {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [files, setFiles] = useState<ImportFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [selectedFile, setSelectedFile] = useState<ImportFile | null>(null);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [exportingProposals, setExportingProposals] = useState(false);
   const [applyResult, setApplyResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [proposalResult, setProposalResult] = useState("");
   const [error, setError] = useState("");
   const [history, setHistory] = useState<ImportHistory[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -755,6 +767,7 @@ function VendorImportPage() {
     setPreviewing(true);
     setPreview(null);
     setApplyResult(null);
+    setProposalResult("");
     setError("");
     try {
       const res = await fetch(`${API}/vendor-track/import/preview`, {
@@ -772,6 +785,11 @@ function VendorImportPage() {
     }
   };
 
+  const refreshFilesAndPreview = async () => {
+    await loadFiles();
+    if (selectedFile) await handlePreview(selectedFile);
+  };
+
   const handleApply = async () => {
     if (!selectedFile) return;
     setShowConfirm(false);
@@ -787,6 +805,7 @@ function VendorImportPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Apply failed.");
       setApplyResult(data);
+      setProposalResult("");
       loadHistory();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Apply failed.");
@@ -795,19 +814,60 @@ function VendorImportPage() {
     }
   };
 
+  const handleExportProposals = async () => {
+    if (!selectedFile) return;
+    setExportingProposals(true);
+    setError("");
+    setProposalResult("");
+    try {
+      const res = await fetch(`${API}/vendor-track/import/export-proposals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_path: selectedFile.absolute_path }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not export proposed dates.");
+      setProposalResult(data.message || `Exported ${data.filename}.`);
+      await loadFiles();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not export proposed dates.");
+    } finally {
+      setExportingProposals(false);
+    }
+  };
+
   const incomingFiles = files.filter(f => !f.is_outgoing);
+  const filesByVendor = incomingFiles.reduce<Record<string, ImportFile[]>>((groups, file) => {
+    (groups[file.vendor_folder] ??= []).push(file);
+    return groups;
+  }, {});
+  const proposalRows = preview?.items.filter(item =>
+    item.proposed_date.trim() && item.proposed_date.trim().toLowerCase() !== item.vendor_date.trim().toLowerCase()
+  ) ?? [];
+  const canExportProposals = Boolean(
+    preview && proposalRows.length > 0 && proposalRows.every(item => item.matched && !item.ambiguous)
+  );
+  const canApplyVendorDates = Boolean(
+    preview && preview.changed_dates_count > 0 && preview.unmatched_rows === 0 && preview.ambiguous_rows === 0
+  );
 
   return (
-    <div className="vt-page">
+    <div className={`vt-page${sidebarOpen ? "" : " vt-page-sidebar-collapsed"}`}>
       {/* ── Sidebar: file list ─────────────────────────── */}
       <div className="vt-sidebar">
+        <button className="vt-local-sidebar-toggle" onClick={() => setSidebarOpen(o => !o)}
+          title={sidebarOpen ? "Collapse import sidebar" : "Expand import sidebar"}>
+          <Menu size={15} />
+          {sidebarOpen && <span>Collapse</span>}
+        </button>
+        {sidebarOpen && <>
         <div className="vt-sidebar-section">
           <div className="vt-section-head">
             <FolderOpen size={13} />
             <span>VENDOR RESPONSE FILES</span>
           </div>
           <div className="vt-project-controls">
-            <button className="vt-ctrl-btn" onClick={loadFiles} title="Refresh file list">
+            <button className="vt-ctrl-btn" onClick={refreshFilesAndPreview} title="Refresh files and preview the selected workbook">
               <RefreshCw size={11} className={loadingFiles ? "spin" : ""} />
             </button>
           </div>
@@ -822,18 +882,22 @@ function VendorImportPage() {
             </div>
           ) : (
             <div className="vt-project-list">
-              {incomingFiles.map(f => (
-                <div
-                  key={f.absolute_path}
-                  className={`vt-project-item${selectedFile?.absolute_path === f.absolute_path ? " vt-project-checked" : ""}`}
-                  onClick={() => handlePreview(f)}
-                  role="button" tabIndex={0}
-                  onKeyDown={e => e.key === "Enter" && handlePreview(f)}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="file-name" style={{ wordBreak: "break-all" }}>{f.filename}</div>
-                    <div className="file-label">{f.vendor_folder} · {f.modified_at}</div>
-                  </div>
+              {Object.entries(filesByVendor).map(([vendor, vendorFiles]) => (
+                <div key={vendor} className="response-vendor-group">
+                  <div className="response-vendor-heading"><FolderOpen size={12} /> {vendor}</div>
+                  {vendorFiles.map(f => (
+                    <div
+                      key={f.absolute_path}
+                      className={`vt-project-item${selectedFile?.absolute_path === f.absolute_path ? " vt-project-checked" : ""}`}
+                      onClick={() => handlePreview(f)} role="button" tabIndex={0}
+                      onKeyDown={e => e.key === "Enter" && handlePreview(f)}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="file-name" style={{ wordBreak: "break-all" }}>{f.filename}</div>
+                        <div className="file-label">{f.modified_at}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -859,6 +923,7 @@ function VendorImportPage() {
             </div>
           </div>
         )}
+        </>}
       </div>
 
       {/* ── Main content ──────────────────────────── */}
@@ -869,8 +934,13 @@ function VendorImportPage() {
           </div>
         )}
         {applyResult && (
+          <div className={`upload-message ${applyResult.success ? "success-text" : "error-text"}`} style={{ marginBottom: 16 }}>
+            {applyResult.success ? <CheckCircle size={14} /> : <AlertTriangle size={14} />} {applyResult.message}
+          </div>
+        )}
+        {proposalResult && (
           <div className="upload-message success-text" style={{ marginBottom: 16 }}>
-            <CheckCircle size={14} /> {applyResult.message}
+            <CheckCircle size={14} /> {proposalResult}
           </div>
         )}
 
@@ -885,19 +955,24 @@ function VendorImportPage() {
               </p>
             </div>
             <div className="table-actions">
-              {preview && preview.changed_dates_count > 0 && (
-                <button
-                  className="primary-button"
-                  onClick={() => setShowConfirm(true)}
-                  disabled={applying}
-                >
-                  {applying ? (
-                    <><LoaderCircle size={14} className="spin" /> Applying…</>
-                  ) : (
-                    <><CheckCircle size={14} /> Apply {preview.changed_dates_count} Date(s)</>
-                  )}
-                </button>
-              )}
+              <button className="outline-button" onClick={handleExportProposals}
+                disabled={!selectedFile || !canExportProposals || exportingProposals}
+                title={!selectedFile ? "Select a vendor response workbook first"
+                  : !canExportProposals ? "Add Proposed Date values for matched, unambiguous rows to enable export"
+                  : "Replace the current Vendor Date Request with the proposed dates"}>
+                {exportingProposals
+                  ? <><LoaderCircle size={14} className="spin" /> Exporting…</>
+                  : <><FileDown size={14} /> Export Vendor Date Request</>}
+              </button>
+              <button className="primary-button" onClick={() => setShowConfirm(true)}
+                disabled={!selectedFile || !canApplyVendorDates || applying}
+                title={!selectedFile ? "Select a vendor response workbook first"
+                  : !canApplyVendorDates ? "Requires accepted Vendor Dates with no unmatched or ambiguous rows"
+                  : "Copy accepted Vendor Dates into the matched projects' Final Date fields"}>
+                {applying
+                  ? <><LoaderCircle size={14} className="spin" /> Applying…</>
+                  : <><CheckCircle size={14} /> Update Material Shortage Registers</>}
+              </button>
             </div>
           </div>
 
@@ -905,8 +980,8 @@ function VendorImportPage() {
             <div className="table-toolbar">
               <div className="result-count">
                 {preview.total_rows} rows · {preview.matched_rows} matched ·{" "}
-                <strong style={{ color: "#217a4d" }}>{preview.changed_dates_count} new dates</strong> ·{" "}
-                {preview.unmatched_rows} unmatched
+                <strong style={{ color: "#217a4d" }}>{preview.changed_dates_count} accepted Vendor Dates</strong> ·{" "}
+                {preview.proposed_dates_count} proposed · {preview.unmatched_rows} unmatched · {preview.ambiguous_rows} ambiguous
               </div>
             </div>
           )}
@@ -916,51 +991,33 @@ function VendorImportPage() {
               <thead>
                 <tr>
                   <th>Status</th>
-                  <th>WBS Element</th>
-                  <th>Material Code</th>
-                  <th>Vendor</th>
-                  <th>Final Date (New)</th>
-                  <th>Final Date (Current)</th>
+                  <th>Matched Project</th>
+                  {preview?.headers.map(header => <th key={header}>{header}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {previewing ? (
-                  <tr><td colSpan={6} className="empty-cell">
+                  <tr><td colSpan={(preview?.headers.length ?? 0) + 2} className="empty-cell">
                     <LoaderCircle className="spin" size={22} /> Validating and previewing…
                   </td></tr>
                 ) : !preview ? (
-                  <tr><td colSpan={6} className="empty-cell">
+                  <tr><td colSpan={(preview?.headers.length ?? 0) + 2} className="empty-cell">
                     <FileSpreadsheet size={28} style={{ display: "block", margin: "0 auto 10px" }} />
                     Select a vendor response file from the sidebar to preview changes.
                   </td></tr>
                 ) : preview.items.length === 0 ? (
-                  <tr><td colSpan={6} className="empty-cell">
+                  <tr><td colSpan={(preview?.headers.length ?? 0) + 2} className="empty-cell">
                     No data rows found in the file.
                   </td></tr>
                 ) : preview.items.map((item, idx) => (
-                  <tr key={idx} className={
-                    item.status === "MATCHED_NEW_DATE" ? "import-row-new"
-                      : item.status === "UNMATCHED" ? "import-row-unmatched"
-                      : ""
-                  }>
-                    <td>
-                      <span className={`status-badge ${
-                        item.status === "MATCHED_NEW_DATE" ? "badge-ok"
-                          : item.status === "MATCHED" ? "badge-ok"
-                          : "badge-miss"
-                      }`}>
-                        {item.status === "MATCHED_NEW_DATE" ? <><CheckCircle size={11} /> New Date</>
-                          : item.status === "MATCHED" ? <><CheckCircle size={11} /> Matched</>
-                          : <><XCircle size={11} /> Unmatched</>}
-                      </span>
-                    </td>
-                    <td>{item.wbs_element || "—"}</td>
-                    <td><span className="material-code">{item.material_code || "—"}</span></td>
-                    <td>{item.vendor || "—"}</td>
-                    <td style={{ fontWeight: item.status === "MATCHED_NEW_DATE" ? 700 : 400, color: item.status === "MATCHED_NEW_DATE" ? "#217a4d" : undefined }}>
-                      {item.final_date || "—"}
-                    </td>
-                    <td style={{ color: "#888" }}>{item.current_final_date || "—"}</td>
+                  <tr key={idx}>
+                    <td />
+                    <td>{item.project_id || "—"}</td>
+                    {preview?.headers.map(header => (
+                      <td key={header} className={header.toLowerCase().includes("date") ? "date-cell" : undefined}>
+                        {header.trim().toLowerCase() === "status" ? "" : item.workbook_values[header] || "—"}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
@@ -982,7 +1039,7 @@ function VendorImportPage() {
             </div>
             <div className="modal-body">
               <p>
-                This will update <strong>{preview?.changed_dates_count ?? 0}</strong> Final Date(s)
+                This will copy <strong>Vendor Date</strong> into Final Date for <strong>{preview?.changed_dates_count ?? 0}</strong> matched row(s)
                 in the shortage database and refresh affected Material Shortage Registers.
               </p>
               <p style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
@@ -1006,6 +1063,7 @@ function VendorImportPage() {
    Vendor Track page (Export)
 ═══════════════════════════════════════════════════════════ */
 function VendorTrackPage() {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   // Project selection state
   const [projects, setProjects] = useState<string[]>([]);
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
@@ -1215,9 +1273,15 @@ function VendorTrackPage() {
   ] as const;
 
   return (
-    <div className="vt-page">
+    <div className={`vt-page${sidebarOpen ? "" : " vt-page-sidebar-collapsed"}`}>
       {/* ── VT Sidebar ─────────────────────────────── */}
       <div className="vt-sidebar">
+        <button className="vt-local-sidebar-toggle" onClick={() => setSidebarOpen(o => !o)}
+          title={sidebarOpen ? "Collapse export sidebar" : "Expand export sidebar"}>
+          <Menu size={15} />
+          {sidebarOpen && <span>Collapse</span>}
+        </button>
+        {sidebarOpen && <>
         {/* Project selection */}
         <div className="vt-sidebar-section">
           <div className="vt-section-head">
@@ -1329,6 +1393,7 @@ function VendorTrackPage() {
             )}
           </div>
         )}
+        </>}
       </div>
 
       {/* ── VT Main content ──────────────────────────── */}
@@ -1361,7 +1426,7 @@ function VendorTrackPage() {
                 id="export-vendor-date-request-btn"
                 className="primary-button"
                 onClick={handleExportDateRequest}
-                disabled={processedProjectIds.length === 0 || vtLoading || exporting}
+                disabled={processedProjectIds.length === 0 || vtLoading || exporting || selectedVendor === "All Vendors"}
                 title={
                   processedProjectIds.length === 0
                     ? "Load Vendor Track records first"
@@ -1536,6 +1601,10 @@ export default function App() {
   const [page, setPage] = useState<"shortage" | "input" | "vendortrack">("input");
   const [vtSubPage, setVtSubPage] = useState<"export" | "import">("export");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [shortageSidebarOpen, setShortageSidebarOpen] = useState(true);
+  const [registerProjects, setRegisterProjects] = useState<string[]>([]);
+  const [registerExporting, setRegisterExporting] = useState(false);
+  const [registerExportMessage, setRegisterExportMessage] = useState("");
 
   /* Shortage page state */
   const [filters, setFilters] = useState<Filters>({
@@ -1553,18 +1622,19 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [remarksMap, setRemarksMap] = useState<Record<string, string>>({});
 
-  /* Shared project state — used by both sidebar combobox and InputPage */
+  /* Input/shortage project context; each page provides its own project list. */
   const [projects, setProjects] = useState<string[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
 
   /* ── Data loaders ── */
   const loadFilters = useCallback(async () => {
     const params = new URLSearchParams();
-    if (selectedProject) params.set("project_id", selectedProject);
+    const projectFilter = page === "shortage" ? (selectedProject || "__no_project__") : selectedProject;
+    if (projectFilter) params.set("project_id", projectFilter);
     const res = await fetch(`${API}/filters?${params}`);
     if (!res.ok) throw new Error("Could not load filter values.");
     setFilters(await res.json());
-  }, [selectedProject]);
+  }, [selectedProject, page]);
 
   const loadData = useCallback(async () => {
     setLoading(true); setError("");
@@ -1573,7 +1643,8 @@ export default function App() {
         page: String(pageNum), page_size: String(pageSize),
         sort_by: sort.by, sort_dir: sort.dir,
       });
-      if (selectedProject) params.set("project_id", selectedProject);
+      const projectFilter = page === "shortage" ? (selectedProject || "__no_project__") : selectedProject;
+      if (projectFilter) params.set("project_id", projectFilter);
       (Object.keys(selected) as (keyof typeof selected)[])
         .forEach(k => { if (selected[k] !== "All") params.set(k, selected[k]); });
       const res = await fetch(`${API}/shortages?${params}`);
@@ -1582,7 +1653,7 @@ export default function App() {
     } catch {
       setError("Cannot connect to the backend. Start FastAPI on http://127.0.0.1:8000 and refresh.");
     } finally { setLoading(false); }
-  }, [selected, pageNum, pageSize, sort, selectedProject]);
+  }, [selected, pageNum, pageSize, sort, selectedProject, page]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -1591,12 +1662,41 @@ export default function App() {
     } catch { /* non-blocking */ }
   }, []);
 
+  const loadRegisterProjects = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/projects/registers`);
+      if (res.ok) {
+        const available = (await res.json()).projects ?? [];
+        setRegisterProjects(available);
+        setSelectedProject(current => current && available.includes(current) ? current : (available[0] ?? ""));
+      }
+    } catch { /* non-blocking */ }
+  }, []);
+
+  const exportProjectRegister = async () => {
+    if (!selectedProject) return;
+    setRegisterExporting(true);
+    setRegisterExportMessage("");
+    try {
+      const res = await fetch(`${API}/projects/${encodeURIComponent(selectedProject)}/export-register`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Register export failed.");
+      setRegisterExportMessage(`Saved ${data.filename} in ${selectedProject}.`);
+      await loadRegisterProjects();
+    } catch (e) {
+      setRegisterExportMessage(e instanceof Error ? e.message : "Register export failed.");
+    } finally {
+      setRegisterExporting(false);
+    }
+  };
+
   useEffect(() => {
     loadFilters().catch(() => setError("Backend is not running. Start FastAPI first."));
     loadProjects();
   }, [loadFilters, loadProjects]);
   useEffect(() => { loadData(); }, [loadData]);
   useEffect(() => { if (page === "input") loadProjects(); }, [page, loadProjects]);
+  useEffect(() => { if (page === "shortage") loadRegisterProjects(); }, [page, loadRegisterProjects]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1623,21 +1723,6 @@ export default function App() {
         body: JSON.stringify({ material_code: row.material_code, wbs_element: row.wbs_element, remarks: val }),
       });
     } catch { /* silent */ }
-  };
-  const exportVisible = () => {
-    const h = columns.map(c => c.label);
-    const esc = (v: unknown) => `"${String(v ?? "").replaceAll('"', '""')}"`;
-    const csv = [h.map(esc).join(","), ...filteredRows.map(r => columns.map(c => esc(r[c.key])).join(","))].join("\r\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-    const a = document.createElement("a"); a.href = url; a.download = "abb-shortage-records.csv"; a.click();
-    URL.revokeObjectURL(url);
-  };
-  const exportXlsx = () => {
-    const params = new URLSearchParams({ format: "xlsx" });
-    (Object.keys(selected) as (keyof typeof selected)[])
-      .forEach(k => { if (selected[k] !== "All") params.set(k, selected[k]); });
-    const a = document.createElement("a");
-    a.href = `${API}/export?${params}`; a.download = "abb-shortage-records.xlsx"; a.click();
   };
 
   const pageTitle: Record<typeof page, string> = {
@@ -1681,45 +1766,18 @@ export default function App() {
             onClick={() => setPage("vendortrack")}>
             <Truck size={18} /> Vendor Track
           </button>
-
-          {/* Project selector — only on Input page */}
-          {page === "input" && (
-            <>
-              <div className="sidebar-caption filter-caption" style={{ marginTop: 24 }}>
-                <FolderOpen size={13} /> SELECT PROJECT
-              </div>
-              <label className="filter-field">
-                <span>Project</span>
-                <Combobox
-                  value={selectedProject || "All"}
-                  options={projects}
-                  onChange={v => setSelectedProject(v === "All" ? "" : v)}
-                  placeholder="— choose project —"
-                />
-              </label>
-              <button className="reset-button" style={{ marginTop: 4 }} onClick={loadProjects}>
-                <RefreshCw size={13} /> Refresh projects
+          {page === "vendortrack" && (
+            <div className="nav-submenu" aria-label="Vendor Track pages">
+              <button className={`nav-subitem${vtSubPage === "export" ? " active" : ""}`}
+                onClick={() => setVtSubPage("export")} aria-current={vtSubPage === "export" ? "page" : undefined}>
+                <FileDown size={16} /> Export
               </button>
-            </>
+              <button className={`nav-subitem${vtSubPage === "import" ? " active" : ""}`}
+                onClick={() => setVtSubPage("import")} aria-current={vtSubPage === "import" ? "page" : undefined}>
+                <UploadCloud size={16} /> Import
+              </button>
+            </div>
           )}
-
-          {/* Shortage filters — only on Shortage page */}
-          {page === "shortage" && <>
-            <div className="sidebar-caption filter-caption"><Filter size={14} /> FILTERS</div>
-            {(Object.keys(filterLabels) as (keyof Filters)[]).map(key => (
-              <label className="filter-field" key={key}>
-                <span>{filterLabels[key]}</span>
-                <Combobox value={selected[key]} options={filters[key] ?? []}
-                  onChange={v => updateFilter(key, v)} />
-              </label>
-            ))}
-            <button className="reset-button" onClick={() => {
-              setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
-              setPageNum(1);
-            }}>
-              <RefreshCw size={14} /> Reset filters
-            </button>
-          </>}
 
           <div className="sidebar-bottom">
             <div className="status-dot" /> Local workspace <span className="version">v1.0</span>
@@ -1740,6 +1798,18 @@ export default function App() {
               onClick={() => setPage("vendortrack")} title="Vendor Track">
               <Truck size={20} />
             </button>
+            {page === "vendortrack" && (
+              <div className="sidebar-sub-icons" aria-label="Vendor Track pages">
+                <button className={`nav-sub-icon${vtSubPage === "export" ? " active" : ""}`}
+                  onClick={() => setVtSubPage("export")} title="Export" aria-current={vtSubPage === "export" ? "page" : undefined}>
+                  <FileDown size={17} />
+                </button>
+                <button className={`nav-sub-icon${vtSubPage === "import" ? " active" : ""}`}
+                  onClick={() => setVtSubPage("import")} title="Import" aria-current={vtSubPage === "import" ? "page" : undefined}>
+                  <UploadCloud size={17} />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </aside>
@@ -1770,7 +1840,54 @@ export default function App() {
 
         {/* ── Shortage page ── */}
         {page === "shortage" ? (
-          <>
+          <div className={`shortage-workspace${shortageSidebarOpen ? "" : " shortage-workspace-collapsed"}`}>
+            <aside className="shortage-workspace-sidebar">
+              <div className="workspace-sidebar-heading">
+                {shortageSidebarOpen && <strong>WORKSPACE</strong>}
+                <button className="workspace-sidebar-toggle" onClick={() => setShortageSidebarOpen(o => !o)}
+                  title={shortageSidebarOpen ? "Collapse Material Shortage Register sidebar" : "Expand Material Shortage Register sidebar"}>
+                  <Menu size={16} />
+                </button>
+              </div>
+              {shortageSidebarOpen && <>
+                <div className="workspace-sidebar-section">
+                  <div className="workspace-sidebar-label">PROCESSED PROJECTS</div>
+                  <button className="reset-button workspace-refresh" onClick={loadRegisterProjects}>
+                    <RefreshCw size={13} /> Refresh projects
+                  </button>
+                  <div className="workspace-project-list">
+                    {registerProjects.map(project => (
+                      <button key={project}
+                        className={`workspace-project-item${selectedProject === project ? " selected" : ""}`}
+                        onClick={() => {
+                          setSelectedProject(project);
+                          setPageNum(1);
+                          setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
+                          setRegisterExportMessage("");
+                        }}>
+                        <FolderOpen size={14} /> <span>{project}</span>
+                      </button>
+                    ))}
+                    {registerProjects.length === 0 && <div className="workspace-empty">No project registers found.</div>}
+                  </div>
+                </div>
+                <div className="workspace-sidebar-section">
+                  <div className="workspace-sidebar-label"><Filter size={13} /> FILTERS</div>
+                  {(Object.keys(filterLabels) as (keyof Filters)[]).map(key => (
+                    <label className="filter-field" key={key}>
+                      <span>{filterLabels[key]}</span>
+                      <Combobox value={selected[key]} options={filters[key] ?? []}
+                        onChange={v => updateFilter(key, v)} />
+                    </label>
+                  ))}
+                  <button className="reset-button" onClick={() => {
+                    setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
+                    setPageNum(1);
+                  }}><RefreshCw size={14} /> Reset filters</button>
+                </div>
+              </>}
+            </aside>
+            <div className="shortage-workspace-main">
             <section className="table-card">
               <div className="table-heading">
                 <div>
@@ -1778,7 +1895,12 @@ export default function App() {
                   <p>Material-level inventory and procurement position</p>
                 </div>
                 <div className="table-actions">
-                  <ExportMenu onCsv={exportVisible} onXlsx={exportXlsx} />
+                  <button className="outline-button" onClick={exportProjectRegister}
+                    disabled={!selectedProject || registerExporting}>
+                    {registerExporting
+                      ? <><LoaderCircle size={14} className="spin" /> Exporting…</>
+                      : <><FileSpreadsheet size={14} /> Export Project Excel</>}
+                  </button>
                   <button className="primary-button" onClick={() => setPage("input")}>
                     <UploadCloud size={16} /> Import data
                   </button>
@@ -1859,10 +1981,12 @@ export default function App() {
                 </div>
               </div>
             </section>
+            {registerExportMessage && <div className="upload-message success-text"><CheckCircle size={14} /> {registerExportMessage}</div>}
             <div className="footnote">
               <Activity size={14} /> Data shown from the local shortage database. Verify imported values against source SAP reports.
             </div>
-          </>
+            </div>
+          </div>
         ) : page === "input" ? (
           /* ── Input & Imports page ── */
           <InputPage
@@ -1873,20 +1997,8 @@ export default function App() {
             onProcessSuccess={() => setPage("shortage")}
           />
         ) : (
-          /* ── Vendor Track page with sub-nav ── */
-          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <div className="vt-sub-nav">
-              <button className={`vt-sub-tab${vtSubPage === "export" ? " active" : ""}`}
-                onClick={() => setVtSubPage("export")}>
-                <FileDown size={14} /> Export
-              </button>
-              <button className={`vt-sub-tab${vtSubPage === "import" ? " active" : ""}`}
-                onClick={() => setVtSubPage("import")}>
-                <UploadCloud size={14} /> Import
-              </button>
-            </div>
-            {vtSubPage === "export" ? <VendorTrackPage /> : <VendorImportPage />}
-          </div>
+          /* ── Vendor Track pages ── */
+          vtSubPage === "export" ? <VendorTrackPage /> : <VendorImportPage />
         )}
       </main>
     </div>

@@ -25,19 +25,23 @@ from services.vendor_request_export import (
 
 
 class TestMaterialShortageColumns(unittest.TestCase):
-    def test_vendor_detail_position_in_columns(self):
-        """1. Vendor Detail appears immediately after Free Stock and immediately before Remarks."""
+    def test_vendor_and_final_date_position_in_columns(self):
+        """Vendor Detail is followed by Final Date, then Remarks."""
         free_idx = DB_COLUMNS.index("Free Stock")
         vendor_idx = DB_COLUMNS.index("Vendor Detail")
+        final_date_idx = DB_COLUMNS.index("Final Date")
         remarks_idx = DB_COLUMNS.index("Remarks")
         self.assertEqual(vendor_idx, free_idx + 1)
-        self.assertEqual(remarks_idx, vendor_idx + 1)
+        self.assertEqual(final_date_idx, vendor_idx + 1)
+        self.assertEqual(remarks_idx, final_date_idx + 1)
 
         api_free_idx = API_COLUMNS.index("free_stock")
         api_vendor_idx = API_COLUMNS.index("vendor_detail")
+        api_final_date_idx = API_COLUMNS.index("final_date")
         api_remarks_idx = API_COLUMNS.index("remarks")
         self.assertEqual(api_vendor_idx, api_free_idx + 1)
-        self.assertEqual(api_remarks_idx, api_vendor_idx + 1)
+        self.assertEqual(api_final_date_idx, api_vendor_idx + 1)
+        self.assertEqual(api_remarks_idx, api_final_date_idx + 1)
 
 
 class TestShortageExport(unittest.TestCase):
@@ -83,9 +87,11 @@ class TestShortageExport(unittest.TestCase):
         self.assertIn("Vendor Detail", headers)
         free_idx = headers.index("Free Stock")
         vend_idx = headers.index("Vendor Detail")
+        final_date_idx = headers.index("Final Date")
         rem_idx = headers.index("Remarks")
         self.assertEqual(vend_idx, free_idx + 1)
-        self.assertEqual(rem_idx, vend_idx + 1)
+        self.assertEqual(final_date_idx, vend_idx + 1)
+        self.assertEqual(rem_idx, final_date_idx + 1)
 
         # Material code preserved as string
         mat_cell = ws.cell(row=2, column=headers.index("Material Code") + 1)
@@ -474,6 +480,57 @@ class TestProjectAwarePersistence(unittest.TestCase):
         self.assertEqual(all_rows[0][2], "Relay V2")  # Updated
         self.assertEqual(all_rows[1][0], "PROJ-B")
         self.assertEqual(all_rows[1][1], "MAT002")  # Untouched
+
+
+class TestShortageMaterialVendorResolution(unittest.TestCase):
+    """Vendor Detail uses ME2M values keyed only by Material Code."""
+
+    def test_unique_me2m_vendor_is_used(self):
+        from services.shortage_service import resolve_material_vendor
+
+        vendor, conflict = resolve_material_vendor(
+            ["1100001469 DEVSHREE ENTERPRISES"]
+        )
+
+        self.assertEqual(vendor, "1100001469 DEVSHREE ENTERPRISES")
+        self.assertFalse(conflict)
+
+    def test_same_material_uses_first_distinct_me2m_value_in_report_order(self):
+        from services.shortage_service import resolve_material_vendor
+
+        vendor, conflict = resolve_material_vendor(
+            [
+                "701501026  ABB India Limited",
+                "701501026 ABB India Limited",
+                "INHN EPDS-LV Systems, Bangalore",
+            ]
+        )
+
+        self.assertEqual(vendor, "701501026 ABB India Limited")
+        self.assertTrue(conflict)
+
+    def test_multiple_me2m_values_still_produce_one_vendor_detail(self):
+        from services.shortage_service import resolve_material_vendor
+
+        vendor, conflict = resolve_material_vendor(
+            ["1100001469 DEVSHREE ENTERPRISES", "1100009999 SIEMENS"]
+        )
+
+        self.assertEqual(vendor, "1100001469 DEVSHREE ENTERPRISES")
+        self.assertTrue(conflict)
+
+    def test_me2m_supplying_plant_value_is_used_when_it_is_first_match(self):
+        from services.shortage_service import resolve_material_vendor
+
+        self.assertEqual(
+            resolve_material_vendor(["INHN EPDS-LV Systems, Bangalore"]),
+            ("INHN EPDS-LV Systems, Bangalore", False),
+        )
+
+    def test_missing_me2m_vendor_remains_empty_without_conflict(self):
+        from services.shortage_service import resolve_material_vendor
+
+        self.assertEqual(resolve_material_vendor([]), (None, False))
 
 
 class TestNestedRegisterExport(unittest.TestCase):

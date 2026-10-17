@@ -163,6 +163,20 @@ def list_projects():
     return {"projects": projects}
 
 
+@router.get("/registers")
+def list_project_registers():
+    """List projects with their canonical Material Shortage Register workbook."""
+    SHORTAGE_REGISTERS_DIR.mkdir(parents=True, exist_ok=True)
+    projects = []
+    for entry in sorted(SHORTAGE_REGISTERS_DIR.iterdir()):
+        if not entry.is_dir() or not _valid_project_id(entry.name):
+            continue
+        workbook = entry / f"{entry.name}_Net_shortage_Table.xlsx"
+        if workbook.is_file() and not workbook.name.startswith("~$"):
+            projects.append(entry.name)
+    return {"projects": projects}
+
+
 @router.get("/{project_id}/files")
 def project_files(project_id: str):
     """Return classified file listings for both the project and global folders."""

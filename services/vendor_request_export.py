@@ -36,6 +36,7 @@ DEFAULT_VENDOR_REGISTERS_DIR = Path(
 
 # Required Excel columns in exact order
 VENDOR_REQUEST_COLUMNS = [
+    "Project ID",
     "Vendor Detail",
     "WBS Element",
     "Material Code",
@@ -47,10 +48,11 @@ VENDOR_REQUEST_COLUMNS = [
 ]
 
 NUMERIC_COLUMNS = {"Quantity"}
-TEXT_COLUMNS = {"Material Code", "WBS Element", "Vendor Detail", "Description"}
+TEXT_COLUMNS = {"Project ID", "Material Code", "WBS Element", "Vendor Detail", "Description"}
 DATE_COLUMNS = {"Vendor Date", "Proposed Date", "Final Date"}
 
 COLUMN_WIDTHS = [
+    20,  # Project ID
     32,  # Vendor Detail
     22,  # WBS Element
     22,  # Material Code
@@ -153,7 +155,11 @@ def build_vendor_request_workbook(
     for row in rows:
         row_data = []
         for col_name in VENDOR_REQUEST_COLUMNS:
-            val = row[col_name] if isinstance(row, sqlite3.Row) else row.get(col_name)
+            if isinstance(row, sqlite3.Row):
+                source_column = "project_id" if col_name == "Project ID" else col_name
+                val = row[source_column]
+            else:
+                val = row.get(col_name)
             if col_name in NUMERIC_COLUMNS:
                 try:
                     val = float(val) if val is not None else 0.0

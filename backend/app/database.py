@@ -13,18 +13,18 @@ VENDOR_REGISTERS_DIR = Path(os.getenv("VENDOR_REGISTERS_DIR", str(ROOT / "Vendor
 VENDOR_DATE_REGISTERS_DIR = Path(os.getenv("VENDOR_DATE_REGISTERS_DIR", str(ROOT / "Vendor Date Registers")))
 
 # Columns produced by services/shortage_service.py in data/services.db.
-# Required order around affected columns: Free Stock | Vendor Detail | Remarks
+# Required order around affected columns: Free Stock | Vendor Detail | Final Date | Remarks
 DB_COLUMNS = [
     "Material Ref Code", "WBS Element", "Material Code", "Material Description",
     "ZPP7 Quantity", "Project Stock Quantity", "PO Quantity", "Open PO Quantity",
-    "PR Quantity", "Net Shortage", "Free Stock", "Vendor Detail", "Remarks", "Scope",
-    "Final Date",
+    "PR Quantity", "Net Shortage", "Free Stock", "Vendor Detail", "Final Date",
+    "Remarks", "Scope",
 ]
 API_COLUMNS = [
     "material_ref_code", "wbs_element", "material_code", "material_description",
     "zpp7_quantity", "project_stock_quantity", "po_quantity", "open_po_quantity",
-    "pr_quantity", "net_shortage", "free_stock", "vendor_detail", "remarks", "scope",
-    "final_date",
+    "pr_quantity", "net_shortage", "free_stock", "vendor_detail", "final_date",
+    "remarks", "scope",
 ]
 DB_TO_API = dict(zip(DB_COLUMNS, API_COLUMNS))
 API_TO_DB = dict(zip(API_COLUMNS, DB_COLUMNS))

@@ -6,7 +6,7 @@ Generates one Excel workbook per project saved under:
 
 Features:
 - Preserves numeric values as numbers and Material Codes as text.
-- Includes Vendor Detail immediately after Free Stock and before Remarks.
+- Places Vendor Detail after Free Stock and Final Date before Remarks.
 - Creates an Excel Table with filters and frozen header row.
 - Configurable output directory.
 """
@@ -46,9 +46,9 @@ SHORTAGE_REGISTER_HEADERS = [
     "Net Shortage",
     "Free Stock",
     "Vendor Detail",
+    "Final Date",
     "Remarks",
     "Scope",
-    "Final Date",
 ]
 
 NUMERIC_COLUMNS = {
@@ -80,9 +80,9 @@ COLUMN_WIDTHS = [
     14,  # Net Shortage
     14,  # Free Stock
     30,  # Vendor Detail
+    16,  # Final Date
     35,  # Remarks
     14,  # Scope
-    16,  # Final Date
 ]
 
 
@@ -198,16 +198,8 @@ def export_material_shortage_register(
         )
         rows = conn.execute(query, (clean_id,)).fetchall()
 
-    if not rows:
-        # Fallback: try loading all rows (backward compat for untagged data)
-        with sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True) as conn:
-            conn.row_factory = sqlite3.Row
-            tables = {r[0].casefold(): r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )}
-            table_name = tables.get("net_shortage")
-            query = f'SELECT * FROM "{table_name}" ORDER BY "Material Code", "WBS Element"'
-            rows = conn.execute(query).fetchall()
+    # Never fall back to another project's rows. An empty project export stays
+    # empty instead of silently including unrelated project data.
 
     wb = build_material_shortage_workbook(rows, table_name_suffix=clean_id)
     wb.save(out_file)

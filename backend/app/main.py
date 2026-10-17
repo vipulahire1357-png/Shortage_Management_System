@@ -464,8 +464,8 @@ def export_shortages(
         "Material Ref Code", "WBS Element", "Material Code",
         "Material Description", "ZPP7 Quantity", "Project Stock Quantity",
         "PO Quantity", "Open PO Quantity", "PR Quantity",
-        "Net Shortage", "Free Stock", "Vendor Detail", "Remarks", "Scope",
-        "Final Date",
+        "Net Shortage", "Free Stock", "Vendor Detail", "Final Date",
+        "Remarks", "Scope",
     ]
 
     fmt = format.lower().strip()

@@ -57,6 +57,7 @@ logs/*
 *.temp
 *.bak
 *.backup
+*.backup_*
 *.old
 
 # SQLite databases and journal / write-ahead-log files
