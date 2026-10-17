@@ -1,11 +1,11 @@
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
 } from "react";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, CheckCircle, ChevronDown,
   ChevronLeft, ChevronRight, FileDown, FileSpreadsheet, Filter, FolderOpen,
   LayoutDashboard, LoaderCircle, Menu, RefreshCw, Search, UploadCloud, X,
-  XCircle,
+  XCircle, Truck, CheckSquare, Square,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────
@@ -17,7 +17,45 @@ const API = "/api";
    Shared UI components
 ═══════════════════════════════════════════════════════════ */
 
-/** Searchable dropdown combobox. */
+/** Position hook to dynamically anchor dropdown above/below and expand visible height intelligently based on available viewport space. */
+function useDropdownPosition(open: boolean, triggerRef: React.RefObject<HTMLDivElement>) {
+  const [placement, setPlacement] = useState<"bottom" | "top">("bottom");
+  const [maxListHeight, setMaxListHeight] = useState<number>(380);
+
+  const calculate = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const margin = 14;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+
+    // Prefer opening upward if space below is cramped (< 300px) and above has more space
+    const openUp = spaceBelow < 300 && spaceAbove > spaceBelow;
+    setPlacement(openUp ? "top" : "bottom");
+
+    // Compute maximum allowable height for the list to maximize visible items without viewport overflow
+    const available = openUp ? spaceAbove : spaceBelow;
+    // Reserve ~70px for search bar, clear button (if any), borders and padding
+    const targetHeight = Math.max(180, Math.min(Math.floor(available - 70), 480));
+    setMaxListHeight(targetHeight);
+  }, [triggerRef]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    calculate();
+    window.addEventListener("resize", calculate);
+    window.addEventListener("scroll", calculate, true);
+    return () => {
+      window.removeEventListener("resize", calculate);
+      window.removeEventListener("scroll", calculate, true);
+    };
+  }, [open, calculate]);
+
+  return { placement, maxListHeight };
+}
+
+/** Searchable single-select dropdown combobox. */
 function Combobox({
   value, options, onChange, placeholder = "Select…",
 }: {
@@ -26,6 +64,7 @@ function Combobox({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const { placement, maxListHeight } = useDropdownPosition(open, ref);
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
@@ -51,20 +90,99 @@ function Combobox({
         <ChevronDown size={13} className={`combobox-chevron${open ? " open" : ""}`} />
       </button>
       {open && (
-        <div className="combobox-dropdown">
+        <div className={`combobox-dropdown placement-${placement}`}>
           <div className="combobox-search">
             <Search size={11} />
             <input autoFocus value={search}
               onChange={e => setSearch(e.target.value)} placeholder="Search…" />
             {search && <button onClick={() => setSearch("")}><X size={10} /></button>}
           </div>
-          <ul className="combobox-list">
+          <ul className="combobox-list" style={{ maxHeight: `${maxListHeight}px` }}>
             {filtered.length === 0
               ? <li className="combobox-empty">No matches</li>
               : filtered.map(o => (
                 <li key={o}
                   className={`combobox-option${value === o ? " selected" : ""}`}
                   onMouseDown={() => select(o)}>{o}</li>
+              ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Multi-select combobox with checkboxes. */
+function MultiCombobox({
+  values, options, onChange, placeholder = "All",
+}: {
+  values: string[]; options: string[]; onChange: (v: string[]) => void; placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const { placement, maxListHeight } = useDropdownPosition(open, ref);
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return q ? options.filter(o => o.toLowerCase().includes(q)) : options;
+  }, [options, search]);
+
+  const toggle = (v: string) => {
+    if (values.includes(v)) onChange(values.filter(x => x !== v));
+    else onChange([...values, v]);
+  };
+
+  const displayValue = values.length === 0
+    ? placeholder
+    : values.length === 1
+    ? values[0]
+    : `${values.length} selected`;
+
+  return (
+    <div className="combobox" ref={ref}>
+      <button type="button" className="combobox-trigger"
+        onClick={() => { setOpen(o => !o); setSearch(""); }}>
+        <span className="combobox-value">{displayValue}</span>
+        <ChevronDown size={13} className={`combobox-chevron${open ? " open" : ""}`} />
+      </button>
+      {open && (
+        <div className={`combobox-dropdown placement-${placement}`}>
+          <div className="combobox-search">
+            <Search size={11} />
+            <input autoFocus value={search}
+              onChange={e => setSearch(e.target.value)} placeholder="Search…" />
+            {search && <button onClick={() => setSearch("")}><X size={10} /></button>}
+          </div>
+          {values.length > 0 && (
+            <div className="multi-combobox-clear">
+              <button onMouseDown={() => onChange([])}>
+                <X size={10} /> Clear ({values.length})
+              </button>
+            </div>
+          )}
+          <ul className="combobox-list" style={{ maxHeight: `${maxListHeight}px` }}>
+            {filtered.length === 0
+              ? <li className="combobox-empty">No matches</li>
+              : filtered.map(o => (
+                <li key={o}
+                  className={`combobox-option multi-option${values.includes(o) ? " selected" : ""}`}
+                  onMouseDown={() => toggle(o)}>
+                  <span className="multi-check">
+                    {values.includes(o)
+                      ? <CheckSquare size={12} />
+                      : <Square size={12} />}
+                  </span>
+                  {o}
+                </li>
               ))}
           </ul>
         </div>
@@ -159,6 +277,22 @@ interface ProjectFilesResponse {
 interface ProjectStatus {
   project_id: string; ready: boolean;
   missing_project: string[]; missing_global: string[];
+}
+
+// Vendor Track types
+interface VtRow {
+  vendor_detail: string;
+  wbs_element: string;
+  material_code: string;
+  description: string;
+  quantity: number;
+}
+interface VtPayload {
+  items: VtRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -465,10 +599,403 @@ function InputPage({
 }
 
 /* ═══════════════════════════════════════════════════════════
+   Vendor Track page
+═══════════════════════════════════════════════════════════ */
+function VendorTrackPage() {
+  // Project selection state
+  const [projects, setProjects] = useState<string[]>([]);
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
+  const [loadingProjects, setLoadingProjects] = useState(false);
+
+  // Processing state
+  const [processing, setProcessing] = useState(false);
+  const [processMsg, setProcessMsg] = useState("");
+  const [processError, setProcessError] = useState("");
+
+  // Filter state
+  const [vendorOptions, setVendorOptions] = useState<string[]>([]);
+  const [wbsOptions, setWbsOptions] = useState<string[]>([]);
+  const [selectedVendor, setSelectedVendor] = useState("All Vendors");
+  const [selectedWbs, setSelectedWbs] = useState<string[]>([]);
+
+  // Table state
+  const [vtPayload, setVtPayload] = useState<VtPayload | null>(null);
+  const [vtLoading, setVtLoading] = useState(false);
+  const [vtError, setVtError] = useState("");
+  const [vtPage, setVtPage] = useState(1);
+  const [vtPageSize, setVtPageSize] = useState(50);
+
+  // Track which project_ids are currently displayed
+  const [processedProjectIds, setProcessedProjectIds] = useState<string[]>([]);
+
+  /* ── Load projects on mount ── */
+  const loadProjects = useCallback(async () => {
+    setLoadingProjects(true);
+    try {
+      const res = await fetch(`${API}/vendor-track/projects`);
+      if (res.ok) {
+        const data = await res.json();
+        setProjects(data.projects ?? []);
+      }
+    } catch { /* non-blocking */ }
+    finally { setLoadingProjects(false); }
+  }, []);
+
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+
+  /* ── Load vendor filter options ── */
+  const loadVendors = useCallback(async (pids: string[]) => {
+    try {
+      const params = pids.length ? `?project_ids=${pids.join(",")}` : "";
+      const res = await fetch(`${API}/vendor-track/vendors${params}`);
+      if (res.ok) {
+        const data = await res.json();
+        setVendorOptions(data.vendors ?? []);
+        // Reset vendor selection if no longer available
+        setSelectedVendor(prev => {
+          if (prev !== "All Vendors" && !(data.vendors ?? []).includes(prev)) return "All Vendors";
+          return prev;
+        });
+      }
+    } catch { /* non-blocking */ }
+  }, []);
+
+  /* ── Load WBS filter options (vendor-aware) ── */
+  const loadWbs = useCallback(async (pids: string[], vendor: string) => {
+    try {
+      const params = new URLSearchParams();
+      if (pids.length) params.set("project_ids", pids.join(","));
+      if (vendor && vendor !== "All Vendors") params.set("vendor", vendor);
+      const res = await fetch(`${API}/vendor-track/wbs-elements?${params}`);
+      if (res.ok) {
+        const data = await res.json();
+        setWbsOptions(data.wbs_elements ?? []);
+        // Remove any selected WBS elements no longer available
+        setSelectedWbs(prev => prev.filter(w => (data.wbs_elements ?? []).includes(w)));
+      }
+    } catch { /* non-blocking */ }
+  }, []);
+
+  /* ── Load VT records ── */
+  const loadVtData = useCallback(async (
+    pids: string[], vendor: string, wbs: string[], page: number, pageSize: number,
+  ) => {
+    setVtLoading(true);
+    setVtError("");
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (pids.length) params.set("project_ids", pids.join(","));
+      if (vendor && vendor !== "All Vendors") params.set("vendor", vendor);
+      if (wbs.length) params.set("wbs_elements", wbs.join(","));
+      const res = await fetch(`${API}/vendor-track/records?${params}`);
+      if (!res.ok) throw new Error("Failed to load vendor track records.");
+      setVtPayload(await res.json());
+    } catch (e) {
+      setVtError(e instanceof Error ? e.message : "Failed to load records.");
+    } finally {
+      setVtLoading(false);
+    }
+  }, []);
+
+  /* Reload data when filters/pagination changes */
+  useEffect(() => {
+    if (processedProjectIds.length === 0) return;
+    loadVtData(processedProjectIds, selectedVendor, selectedWbs, vtPage, vtPageSize);
+  }, [processedProjectIds, selectedVendor, selectedWbs, vtPage, vtPageSize, loadVtData]);
+
+  /* Reload WBS options when vendor changes */
+  useEffect(() => {
+    if (processedProjectIds.length === 0) return;
+    loadWbs(processedProjectIds, selectedVendor);
+    setSelectedWbs([]);
+    setVtPage(1);
+  }, [selectedVendor, processedProjectIds, loadWbs]);
+
+  /* ── Toggle project selection ── */
+  const toggleProject = (id: string) => {
+    setSelectedProjects(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedProjects(new Set(projects));
+  const clearSelection = () => setSelectedProjects(new Set());
+
+  /* ── Run Vendor Track processing ── */
+  const runVendorTrack = async () => {
+    if (selectedProjects.size === 0) {
+      setProcessError("Select at least one project before running Vendor Track.");
+      return;
+    }
+    setProcessing(true);
+    setProcessMsg("");
+    setProcessError("");
+    try {
+      const res = await fetch(`${API}/vendor-track/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_ids: Array.from(selectedProjects) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Processing failed.");
+      setProcessMsg(data.message || "Vendor Track processed successfully.");
+
+      // Update which project IDs are now displayed
+      const pids = Array.from(selectedProjects);
+      setProcessedProjectIds(pids);
+
+      // Reload filter options and table
+      await loadVendors(pids);
+      await loadWbs(pids, "All Vendors");
+      setSelectedVendor("All Vendors");
+      setSelectedWbs([]);
+      setVtPage(1);
+      await loadVtData(pids, "All Vendors", [], 1, vtPageSize);
+    } catch (e) {
+      setProcessError(e instanceof Error ? e.message : "Processing failed.");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const vtColumns = [
+    { key: "vendor_detail", label: "Vendor Detail" },
+    { key: "wbs_element", label: "WBS Element" },
+    { key: "material_code", label: "Material Code" },
+    { key: "description", label: "Description" },
+    { key: "quantity", label: "Quantity", numeric: true },
+  ] as const;
+
+  return (
+    <div className="vt-page">
+      {/* ── VT Sidebar ─────────────────────────────── */}
+      <div className="vt-sidebar">
+        {/* Project selection */}
+        <div className="vt-sidebar-section">
+          <div className="vt-section-head">
+            <FolderOpen size={13} />
+            <span>PROJECTS</span>
+          </div>
+          <div className="vt-project-controls">
+            <button className="vt-ctrl-btn" onClick={selectAll} disabled={projects.length === 0}>
+              All
+            </button>
+            <button className="vt-ctrl-btn" onClick={clearSelection} disabled={selectedProjects.size === 0}>
+              None
+            </button>
+            <button className="vt-ctrl-btn" onClick={loadProjects} title="Refresh projects">
+              <RefreshCw size={11} className={loadingProjects ? "spin" : ""} />
+            </button>
+          </div>
+
+          {loadingProjects ? (
+            <div className="vt-empty-hint"><LoaderCircle size={14} className="spin" /> Loading…</div>
+          ) : projects.length === 0 ? (
+            <div className="vt-empty-hint">No projects found in <code>projects/</code></div>
+          ) : (
+            <div className="vt-project-list">
+              {projects.map(id => (
+                <div
+                  key={id}
+                  className={`vt-project-item${selectedProjects.has(id) ? " vt-project-checked" : ""}`}
+                  onClick={() => toggleProject(id)}
+                  role="checkbox"
+                  aria-checked={selectedProjects.has(id)}
+                  tabIndex={0}
+                  onKeyDown={e => e.key === "Enter" && toggleProject(id)}
+                >
+                  <span className="vt-checkbox">
+                    {selectedProjects.has(id)
+                      ? <CheckSquare size={14} className="vt-check-icon checked" />
+                      : <Square size={14} className="vt-check-icon" />}
+                  </span>
+                  <span className="vt-project-name">{id}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Vendor Track button */}
+          <button
+            id="vendor-track-btn"
+            className="vt-run-btn"
+            disabled={selectedProjects.size === 0 || processing}
+            onClick={runVendorTrack}
+          >
+            {processing
+              ? <><LoaderCircle size={14} className="spin" /> Processing…</>
+              : <><Truck size={14} /> Vendor Track</>}
+          </button>
+          {selectedProjects.size > 0 && !processing && (
+            <div className="vt-selection-count">
+              {selectedProjects.size} project{selectedProjects.size !== 1 ? "s" : ""} selected
+            </div>
+          )}
+        </div>
+
+        {/* Filters — only show once data is loaded */}
+        {processedProjectIds.length > 0 && (
+          <div className="vt-sidebar-section vt-filters-section">
+            <div className="vt-section-head">
+              <Filter size={13} />
+              <span>FILTERS</span>
+            </div>
+
+            {/* Vendor filter — single select */}
+            <label className="vt-filter-field">
+              <span>Vendor</span>
+              <Combobox
+                value={selectedVendor}
+                options={vendorOptions}
+                onChange={v => { setSelectedVendor(v === "All" ? "All Vendors" : v); setVtPage(1); }}
+                placeholder="All Vendors"
+              />
+            </label>
+
+            {/* WBS Element filter — multi select */}
+            <label className="vt-filter-field">
+              <span>WBS Element</span>
+              <MultiCombobox
+                values={selectedWbs}
+                options={wbsOptions}
+                onChange={v => { setSelectedWbs(v); setVtPage(1); }}
+                placeholder="All"
+              />
+            </label>
+
+            {(selectedVendor !== "All Vendors" || selectedWbs.length > 0) && (
+              <button className="reset-button" style={{ marginTop: 4 }} onClick={() => {
+                setSelectedVendor("All Vendors");
+                setSelectedWbs([]);
+                setVtPage(1);
+              }}>
+                <RefreshCw size={13} /> Reset filters
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── VT Main content ──────────────────────────── */}
+      <div className="vt-main">
+        {/* Status messages */}
+        {processMsg && (
+          <div className="upload-message success-text" style={{ marginBottom: 16 }}>
+            <CheckCircle size={14} /> {processMsg}
+          </div>
+        )}
+        {processError && (
+          <div className="upload-message error-text" style={{ marginBottom: 16 }}>
+            <AlertTriangle size={14} /> {processError}
+          </div>
+        )}
+
+        {/* Table card */}
+        <section className="table-card">
+          <div className="table-heading">
+            <div>
+              <h2>Vendor Track Register</h2>
+              <p>
+                {processedProjectIds.length > 0
+                  ? `Consolidated records from: ${processedProjectIds.join(", ")}`
+                  : "Select projects and click Vendor Track to load data."}
+              </p>
+            </div>
+            <div className="table-actions">
+              <label className="page-size">
+                Rows <select value={vtPageSize} onChange={e => { setVtPageSize(Number(e.target.value)); setVtPage(1); }}>
+                  <option>25</option><option>50</option><option>100</option><option>200</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div className="table-toolbar">
+            <div className="result-count">
+              {vtLoading ? "Loading records…" : `${vtPayload?.total ?? 0} records`}
+            </div>
+          </div>
+
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  {vtColumns.map(col => (
+                    <th key={col.key} className={col.numeric ? "numeric" : ""}>{col.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {vtLoading ? (
+                  <tr><td colSpan={vtColumns.length} className="empty-cell">
+                    <LoaderCircle className="spin" size={22} /> Loading vendor track data…
+                  </td></tr>
+                ) : vtError ? (
+                  <tr><td colSpan={vtColumns.length} className="empty-cell" style={{ color: "#b5121b" }}>
+                    <AlertTriangle size={18} /> {vtError}
+                  </td></tr>
+                ) : processedProjectIds.length === 0 ? (
+                  <tr><td colSpan={vtColumns.length} className="empty-cell">
+                    <Truck size={28} style={{ display: "block", margin: "0 auto 10px" }} />
+                    Select one or more projects and click <strong>Vendor Track</strong> to load data.
+                  </td></tr>
+                ) : vtPayload?.items.length === 0 ? (
+                  <tr><td colSpan={vtColumns.length} className="empty-cell">
+                    No records match your filters.
+                  </td></tr>
+                ) : vtPayload?.items.map((row, idx) => (
+                  <tr key={`${row.material_code}-${row.wbs_element}-${idx}`}>
+                    {vtColumns.map(col => (
+                      <td key={col.key} className={col.numeric ? "numeric" : ""}>
+                        {col.key === "quantity"
+                          ? <span className={`shortage-pill ${Number(row.quantity) > 0 ? "has-shortage" : "no-shortage"}`}>
+                              {fmt(row.quantity)}
+                            </span>
+                          : col.key === "material_code"
+                          ? <span className="material-code">{row[col.key] || "—"}</span>
+                          : <span>{row[col.key] || "—"}</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="table-footer">
+            <span>Page {vtPayload?.page ?? vtPage} of {vtPayload?.pages ?? 1}</span>
+            <div className="pagination">
+              <button disabled={vtPage <= 1 || vtLoading} onClick={() => setVtPage(p => Math.max(1, p - 1))}>
+                <ChevronLeft size={16} />
+              </button>
+              <span>{vtPage}</span>
+              <button disabled={vtPage >= (vtPayload?.pages ?? 1) || vtLoading} onClick={() => setVtPage(p => p + 1)}>
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <div className="footnote">
+          <Truck size={14} /> Vendor Track shows consolidated shortage records per vendor across selected projects.
+          Data is read-only — modify source project files and reprocess to update.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
    Root App component
 ═══════════════════════════════════════════════════════════ */
 export default function App() {
-  const [page, setPage] = useState<"shortage" | "input">("shortage");
+  const [page, setPage] = useState<"shortage" | "input" | "vendortrack">("shortage");
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   /* Shortage page state */
@@ -571,6 +1098,17 @@ export default function App() {
     a.href = `${API}/export?${params}`; a.download = "abb-shortage-records.xlsx"; a.click();
   };
 
+  const pageTitle: Record<typeof page, string> = {
+    shortage: "Shortage Management",
+    input: "Input & Imports",
+    vendortrack: "Vendor Track",
+  };
+  const pageSubtitle: Record<typeof page, string> = {
+    shortage: "Monitor material availability and procurement gaps.",
+    input: "Select a project, verify required reports, and run shortage calculations.",
+    vendortrack: "Consolidate and track vendor-wise shortage records across multiple projects.",
+  };
+
   return (
     <div className={`app-shell${sidebarOpen ? "" : " sidebar-collapsed"}`}>
       {/* ── Sidebar ───────────────────────────────────── */}
@@ -596,6 +1134,10 @@ export default function App() {
           <button className={`nav-item ${page === "input" ? "active" : ""}`}
             onClick={() => setPage("input")}>
             <FileSpreadsheet size={18} /> Input &amp; Imports
+          </button>
+          <button className={`nav-item ${page === "vendortrack" ? "active" : ""}`}
+            onClick={() => setPage("vendortrack")}>
+            <Truck size={18} /> Vendor Track
           </button>
 
           {/* Project selector — only on Input page */}
@@ -652,6 +1194,10 @@ export default function App() {
               onClick={() => setPage("input")} title="Input &amp; Imports">
               <FileSpreadsheet size={20} />
             </button>
+            <button className={`nav-icon${page === "vendortrack" ? " active" : ""}`}
+              onClick={() => setPage("vendortrack")} title="Vendor Track">
+              <Truck size={20} />
+            </button>
           </div>
         )}
       </aside>
@@ -661,10 +1207,8 @@ export default function App() {
         <header className="topbar">
           <div>
             <div className="eyebrow">ABB · MATERIAL PLANNING</div>
-            <h1>{page === "shortage" ? "Shortage Management" : "Input & Imports"}</h1>
-            <p>{page === "shortage"
-              ? "Monitor material availability and procurement gaps."
-              : "Select a project, verify required reports, and run shortage calculations."}</p>
+            <h1>{pageTitle[page]}</h1>
+            <p>{pageSubtitle[page]}</p>
           </div>
           <div className="topbar-actions">
             <div className="system-status"><span className="status-dot" /> API workspace</div>
@@ -777,7 +1321,7 @@ export default function App() {
               <Activity size={14} /> Data shown from the local shortage database. Verify imported values against source SAP reports.
             </div>
           </>
-        ) : (
+        ) : page === "input" ? (
           /* ── Input & Imports page ── */
           <InputPage
             selectedProject={selectedProject}
@@ -785,6 +1329,9 @@ export default function App() {
             projects={projects}
             onRefreshProjects={loadProjects}
           />
+        ) : (
+          /* ── Vendor Track page ── */
+          <VendorTrackPage />
         )}
       </main>
     </div>

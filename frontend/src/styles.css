@@ -24,12 +24,18 @@
 .combobox-value{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .combobox-chevron{color:#a5a5ab;transition:transform .15s;flex-shrink:0}
 .combobox-chevron.open{transform:rotate(180deg)}
-.combobox-dropdown{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:200;background:#27282c;border:1px solid #48494e;border-radius:7px;box-shadow:0 8px 24px #0006;overflow:hidden}
-.combobox-search{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #3a3b3f;color:#a5a5ab}
+.combobox-dropdown{position:absolute;left:0;right:0;z-index:500;background:#27282c;border:1px solid #48494e;border-radius:7px;overflow:hidden;min-width:200px;display:flex;flex-direction:column}
+.combobox-dropdown.placement-bottom{top:calc(100% + 4px);bottom:auto;box-shadow:0 14px 36px rgba(0,0,0,.65)}
+.combobox-dropdown.placement-top{bottom:calc(100% + 4px);top:auto;box-shadow:0 -12px 32px rgba(0,0,0,.65)}
+.combobox-search{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #3a3b3f;color:#a5a5ab;background:#27282c;position:sticky;top:0;z-index:2;flex-shrink:0}
 .combobox-search input{flex:1;background:transparent;border:0;outline:none;font-size:11px;color:#f1f1f2}
 .combobox-search button{border:0;background:transparent;color:#777;display:flex;cursor:pointer;padding:0}
-.combobox-list{list-style:none;margin:0;padding:4px 0;max-height:190px;overflow-y:auto}
-.combobox-option{padding:8px 12px;font-size:12px;color:#d0d0d4;cursor:pointer}
+.combobox-list{list-style:none;margin:0;padding:4px 0;max-height:420px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#55575e #202124}
+.combobox-list::-webkit-scrollbar{width:6px}
+.combobox-list::-webkit-scrollbar-track{background:#202124}
+.combobox-list::-webkit-scrollbar-thumb{background:#55575e;border-radius:3px}
+.combobox-list::-webkit-scrollbar-thumb:hover{background:#73757e}
+.combobox-option{padding:8px 12px;font-size:12px;color:#d0d0d4;cursor:pointer;line-height:1.35;transition:background .1s,color .1s}
 .combobox-option:hover{background:#313236;color:#fff}
 .combobox-option.selected{background:#3b292b;color:#ff8a8e;font-weight:600}
 .combobox-empty{padding:10px 12px;font-size:11px;color:#777;text-align:center}
@@ -155,4 +161,51 @@
 @media(max-width:760px){
   .input-page{grid-template-columns:1fr}
   .input-sidebar{min-height:auto}
+}
+
+/* ══════════════════════════════════════════════
+   Vendor Track page
+══════════════════════════════════════════════ */
+.vt-page{display:grid;grid-template-columns:230px 1fr;gap:18px;align-items:start}
+.vt-sidebar{display:flex;flex-direction:column;gap:0;background:#fff;border:1px solid #e5e6e9;border-radius:9px;overflow:visible;box-shadow:0 2px 7px #20212404}.vt-sidebar-section:first-child{border-radius:9px 9px 0 0}.vt-sidebar-section:last-child{border-bottom:0;border-radius:0 0 9px 9px}.vt-sidebar>.vt-sidebar-section{overflow:visible}
+.vt-sidebar-section{padding:16px 15px;border-bottom:1px solid #f0f0f2}
+.vt-sidebar-section:last-child{border-bottom:0}
+.vt-filters-section{padding-top:16px}
+.vt-section-head{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:1.3px;color:#898a90;font-weight:700;margin-bottom:12px}
+.vt-project-controls{display:flex;gap:5px;margin-bottom:10px}
+.vt-ctrl-btn{border:1px solid #e0e1e5;background:#fff;color:#555861;border-radius:5px;padding:4px 8px;font-size:10px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.vt-ctrl-btn:hover:not(:disabled){background:#f5f6f8;border-color:#b5121b;color:#b5121b}
+.vt-ctrl-btn:disabled{opacity:.4;cursor:not-allowed}
+.vt-empty-hint{font-size:11px;color:#99a0aa;padding:8px 0;line-height:1.5}
+.vt-empty-hint code{font-size:10px;background:#f3f4f6;padding:1px 4px;border-radius:3px}
+.vt-project-list{display:flex;flex-direction:column;gap:3px;max-height:300px;overflow-y:auto;margin-bottom:14px}
+.vt-project-item{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:6px;border:1px solid #f0f0f2;cursor:pointer;transition:background .1s,border-color .1s;user-select:none}
+.vt-project-item:hover{background:#fafbff;border-color:#c8c9cf}
+.vt-project-checked{background:#fff7f7;border-color:#e5b5b8}
+.vt-checkbox{display:flex;align-items:center;flex-shrink:0}
+.vt-check-icon{color:#c0c2c8}
+.vt-check-icon.checked{color:#b5121b}
+.vt-project-name{font-size:11px;font-weight:600;color:#25272d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vt-run-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:#b5121b;color:#fff;border:0;border-radius:7px;padding:11px;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s}
+.vt-run-btn:hover:not(:disabled){background:#991018}
+.vt-run-btn:disabled{opacity:.5;cursor:not-allowed}
+.vt-selection-count{text-align:center;font-size:10px;color:#898a90;margin-top:7px}
+.vt-filter-field{display:flex;flex-direction:column;gap:7px;margin-bottom:14px}
+.vt-filter-field>span{font-size:11px;color:#696b72;font-weight:600}
+.vt-main{display:flex;flex-direction:column;gap:14px;min-height:400px}
+
+/* Multi-select combobox extras */
+.multi-combobox-clear{padding:4px 10px;border-bottom:1px solid #3a3b3f;background:#27282c;flex-shrink:0}
+.multi-combobox-clear button{display:flex;align-items:center;gap:5px;border:0;background:transparent;color:#f05258;font-size:11px;cursor:pointer;padding:2px 0}
+.multi-combobox-clear button:hover{color:#ff8a8e}
+.multi-option{display:flex;align-items:center;gap:7px}
+.multi-check{display:flex;align-items:center;flex-shrink:0;color:#a5a5ab}
+.multi-option.selected .multi-check{color:#ff8a8e}
+
+@media(max-width:1100px){
+  .vt-page{grid-template-columns:200px 1fr}
+}
+@media(max-width:760px){
+  .vt-page{grid-template-columns:1fr}
+  .vt-sidebar{min-height:auto}
 }

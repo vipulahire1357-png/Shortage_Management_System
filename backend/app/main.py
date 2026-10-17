@@ -24,6 +24,7 @@ from .database import (
     get_output_table,
 )
 from .projects import router as projects_router
+from .vendortrack import router as vendortrack_router
 
 
 @asynccontextmanager
@@ -52,6 +53,7 @@ app.add_middleware(
 )
 
 app.include_router(projects_router)
+app.include_router(vendortrack_router)
 
 
 def quote_identifier(identifier: str) -> str:
