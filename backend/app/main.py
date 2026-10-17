@@ -438,7 +438,7 @@ def export_shortages(
         "Material Ref Code", "WBS Element", "Material Code",
         "Material Description", "ZPP7 Quantity", "Project Stock Quantity",
         "PO Quantity", "Open PO Quantity", "PR Quantity",
-        "Net Shortage", "Free Stock", "Remarks", "Scope",
+        "Net Shortage", "Free Stock", "Vendor Detail", "Remarks", "Scope",
     ]
 
     fmt = format.lower().strip()
@@ -463,7 +463,7 @@ def export_shortages(
     # ── XLSX ─────────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Net Shortage"
+    ws.title = "Material Shortage Register"
 
     # Header row styling.
     header_fill = PatternFill("solid", fgColor="B5121B")
@@ -499,7 +499,7 @@ def export_shortages(
     # Freeze header row, set reasonable column widths.
     ws.freeze_panes = "A2"
     col_widths = [
-        22, 22, 22, 40, 12, 16, 12, 14, 12, 14, 12, 35, 14
+        22, 22, 22, 40, 12, 16, 12, 14, 12, 14, 12, 30, 35, 14
     ]
     for i, width in enumerate(col_widths, start=1):
         ws.column_dimensions[

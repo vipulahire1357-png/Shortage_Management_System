@@ -2,54 +2,35 @@
 Vendor Track API for ABB Shortage Management System.
 
 Provides:
-  GET  /api/vendor-track/projects        — available project IDs
-  POST /api/vendor-track/process         — process selected projects
-  GET  /api/vendor-track/records         — paginated/filtered records
-  GET  /api/vendor-track/vendors         — distinct vendor values
-  GET  /api/vendor-track/wbs-elements    — distinct WBS element values
+  GET  /api/vendor-track/projects            — available project register files from Material Shortage Registers/
+  POST /api/vendor-track/process             — process selected project register files into Vendor Track
+  GET  /api/vendor-track/records             — paginated/filtered 8-column records
+  GET  /api/vendor-track/vendors             — distinct vendor values
+  GET  /api/vendor-track/wbs-elements        — distinct WBS element values
+  POST /api/vendor-track/export-date-request — export filtered records to Vendor Registers/<vendor>/...
 """
 
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .database import PROJECTS_DIR, RAW_DIR, REPORTS, ROOT, SERVICES_DB
+from .database import ROOT, SERVICES_DB, SHORTAGE_REGISTERS_DIR, VENDOR_REGISTERS_DIR
+from services.vendortrack_service import refresh_vendor_track_from_registers
+from services.vendor_request_export import export_vendor_date_request
 
 router = APIRouter(prefix="/api/vendor-track", tags=["vendor-track"])
 
 # ── Safety guard: only alphanumerics and hyphens in project IDs ──────────────
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,63}$")
 
-REQUIRED_PROJECT_KEYS = {"zpp7", "mb25", "me2j", "pr"}
-REQUIRED_GLOBAL_KEYS = {"mb52", "scopelist"}
-
-GLOBAL_DIR = ROOT / "global"
-
 
 def _valid_project_id(project_id: str) -> bool:
     return bool(_SAFE_ID.match(project_id))
-
-
-def _quote(v: str) -> str:
-    return '"' + v.replace('"', '""') + '"'
-
-
-def _connect_services_rw():
-    """Open services.db for read-write (not URI mode)."""
-    import sqlite3
-    if not SERVICES_DB.exists():
-        raise FileNotFoundError("Shortage database does not exist. Process a project first.")
-    conn = sqlite3.connect(str(SERVICES_DB))
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def _connect_services_ro():
@@ -62,205 +43,90 @@ def _connect_services_ro():
     return conn
 
 
-# ── File classifiers (mirrors projects.py) ───────────────────────────────────
-
-def _is_zpp7(p: Path) -> bool:
-    return "zpp7" in p.name.casefold()
-
-def _is_mb25(p: Path) -> bool:
-    return "mb25" in p.name.casefold()
-
-def _is_mb52(p: Path) -> bool:
-    n = p.name.casefold()
-    return "in_mm_innr_mb52" in n or "mb52" in n
-
-def _is_me2j(p: Path) -> bool:
-    return "me2j" in p.stem.casefold()
-
-def _is_pr(p: Path) -> bool:
-    stem = p.stem.strip().casefold()
-    return (
-        stem in {"pr", "pr 1", "purchase requisition"}
-        or stem.startswith("pr ")
-        or stem.startswith("pr_")
-        or "purchase requisition" in stem
-    )
-
-def _is_scopelist(p: Path) -> bool:
-    return "material_scope_list" in p.name.casefold()
-
-PROJECT_REPORT_CLASSIFIERS: list[tuple[str, Any]] = [
-    ("zpp7", _is_zpp7), ("mb25", _is_mb25), ("me2j", _is_me2j), ("pr", _is_pr),
-]
-GLOBAL_REPORT_CLASSIFIERS: list[tuple[str, Any]] = [
-    ("mb52", _is_mb52), ("scopelist", _is_scopelist),
-]
-
-
-def _classify_files(folder: Path, classifiers: list[tuple[str, Any]]) -> dict[str, Path | None]:
-    found: dict[str, Path | None] = {key: None for key, _ in classifiers}
-    if not folder.exists():
-        return found
-    for p in sorted(folder.iterdir()):
-        if not p.is_file() or p.name.startswith("~$"):
-            continue
-        for key, fn in classifiers:
-            if found[key] is None and fn(p):
-                found[key] = p
-                break
-    return found
-
-
-# ── Pydantic request body ─────────────────────────────────────────────────────
+# ── Pydantic request bodies ───────────────────────────────────────────────────
 
 class VendorTrackProcessRequest(BaseModel):
     project_ids: list[str]
+
+
+class VendorDateRequestExportModel(BaseModel):
+    vendor: str
+    project_ids: list[str] | None = None
+    wbs_elements: list[str] | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/projects")
 def list_vt_projects():
-    """Return all valid project IDs available for Vendor Track processing."""
-    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-    projects = []
-    for entry in sorted(PROJECTS_DIR.iterdir()):
-        if entry.is_dir() and _valid_project_id(entry.name):
-            projects.append(entry.name)
-    return {"projects": projects}
+    """
+    Return all project IDs available in Material Shortage Registers/.
+    The input source for Vendor Track is the files in Material Shortage Registers/.
+    """
+    SHORTAGE_REGISTERS_DIR.mkdir(parents=True, exist_ok=True)
+    projects: list[str] = []
+    files: list[dict[str, str]] = []
+
+    for entry in sorted(SHORTAGE_REGISTERS_DIR.iterdir()):
+        if (
+            entry.is_file()
+            and entry.suffix.lower() in (".xlsx", ".xls", ".xlsm")
+            and not entry.name.startswith("~$")
+            and _valid_project_id(entry.stem)
+        ):
+            projects.append(entry.stem)
+            files.append({
+                "project_id": entry.stem,
+                "filename": entry.name,
+            })
+
+    return {
+        "projects": projects,
+        "files": files,
+        "folder": SHORTAGE_REGISTERS_DIR.name,
+    }
 
 
 @router.post("/process")
 def process_vendor_track(body: VendorTrackProcessRequest):
     """
-    Process selected projects for Vendor Track.
-
-    For each project:
-      1. Validate project ID and file availability.
-      2. Stage project + global files into data/raw/.
-      3. Run main.py (parsers + shortage calc) to populate net_shortage.
-      4. Build vendor_track rows from net_shortage tagged with project_id.
-      5. Delete old rows for that project and insert fresh ones.
-
-    Unselected projects' rows in vendor_track are NOT modified.
+    Process selected project Material Shortage Register files for Vendor Track.
+    Validates register files, combines records from all selected projects into
+    one Vendor Track Register, and preserves existing date values.
     """
     if not body.project_ids:
         raise HTTPException(status_code=422, detail="At least one project must be selected.")
 
-    # Validate and deduplicate project IDs
+    # Deduplicate while preserving order
     seen: set[str] = set()
-    validated: list[str] = []
+    validated_pids: list[str] = []
     for pid in body.project_ids:
-        if not _valid_project_id(pid):
+        clean = pid.strip()
+        if not _valid_project_id(clean):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid project ID {pid!r}. Use only alphanumerics and hyphens.",
             )
-        if pid not in seen:
-            seen.add(pid)
-            validated.append(pid)
+        if clean not in seen:
+            seen.add(clean)
+            validated_pids.append(clean)
 
-    # Check all projects exist and have required files
-    GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
-    glob_matches = _classify_files(GLOBAL_DIR, GLOBAL_REPORT_CLASSIFIERS)
-    missing_global = [k for k in REQUIRED_GLOBAL_KEYS if not glob_matches.get(k)]
-    if missing_global:
-        labels = [REPORTS.get(k, {}).get("label", k.upper()) for k in missing_global]
-        raise HTTPException(
-            status_code=422,
-            detail="Missing global reports: " + ", ".join(labels),
+    try:
+        result = refresh_vendor_track_from_registers(
+            project_ids=validated_pids,
+            registers_dir=SHORTAGE_REGISTERS_DIR,
+            db_path=SERVICES_DB,
         )
-
-    for pid in validated:
-        proj_dir = (PROJECTS_DIR / pid).resolve()
-        if not str(proj_dir).startswith(str(PROJECTS_DIR.resolve())):
-            raise HTTPException(status_code=400, detail="Invalid project path.")
-        if not proj_dir.exists():
-            raise HTTPException(status_code=404, detail=f"Project folder '{pid}' does not exist.")
-        proj_matches = _classify_files(proj_dir, PROJECT_REPORT_CLASSIFIERS)
-        missing_project = [k for k in REQUIRED_PROJECT_KEYS if not proj_matches.get(k)]
-        if missing_project:
-            labels = [REPORTS.get(k, {}).get("label", k.upper()) for k in missing_project]
-            raise HTTPException(
-                status_code=422,
-                detail=f"Project '{pid}' is missing reports: " + ", ".join(labels),
-            )
-
-    # Process each project in sequence
-    from services.vendortrack_service import refresh_vendor_track_for_project
-
-    results = []
-    known_stems = {v["stem"].casefold() for v in REPORTS.values()}
-
-    for pid in validated:
-        proj_dir = PROJECTS_DIR / pid
-        proj_matches = _classify_files(proj_dir, PROJECT_REPORT_CLASSIFIERS)
-        all_matches = {**proj_matches, **glob_matches}
-
-        # Clear previously staged report files
-        RAW_DIR.mkdir(parents=True, exist_ok=True)
-        for existing in list(RAW_DIR.iterdir()):
-            if existing.is_file() and existing.stem.casefold() in known_stems:
-                existing.unlink()
-
-        # Stage this project's files
-        staged = []
-        for key in list(REQUIRED_PROJECT_KEYS | REQUIRED_GLOBAL_KEYS):
-            source = all_matches.get(key)
-            if source is None:
-                continue
-            dest = RAW_DIR / f"{REPORTS[key]['stem']}{source.suffix}"
-            shutil.copy2(source, dest)
-            staged.append(dest.name)
-
-        # Run the full pipeline (parsers + shortage_service)
-        try:
-            result = subprocess.run(
-                [sys.executable, "main.py", "--report", "all"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise HTTPException(
-                status_code=504,
-                detail=f"Processing project '{pid}' timed out after 10 minutes.",
-            ) from exc
-
-        output = result.stdout or ""
-        if result.stderr:
-            output += "\n--- STDERR ---\n" + result.stderr
-
-        if result.returncode != 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Processing project '{pid}' failed:\n" + output[-8000:],
-            )
-
-        # Refresh vendor_track rows for this project (idempotent)
-        try:
-            row_count = refresh_vendor_track_for_project(pid, SERVICES_DB)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Vendor track refresh failed for project '{pid}': {exc}",
-            ) from exc
-
-        results.append({
-            "project_id": pid,
-            "rows": row_count,
-            "staged_files": sorted(staged),
-        })
-
-    total_rows = sum(r["rows"] for r in results)
-    return {
-        "message": (
-            f"Vendor Track processing complete for {len(validated)} project(s). "
-            f"{total_rows} vendor track rows refreshed."
-        ),
-        "projects": results,
-    }
+        return result
+    except FileNotFoundError as fnf_err:
+        raise HTTPException(status_code=404, detail=str(fnf_err)) from fnf_err
+    except ValueError as val_err:
+        raise HTTPException(status_code=422, detail=str(val_err)) from val_err
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Vendor track refresh failed: {exc}",
+        ) from exc
 
 
 @router.get("/records")
@@ -272,13 +138,15 @@ def get_vt_records(
     page_size: int = 50,
 ):
     """
-    Return paginated Vendor Track records.
-
-    Query params:
-      project_ids  — comma-separated project IDs to include (all if omitted)
-      vendor       — single vendor filter ('All Vendors' or omit for all)
-      wbs_elements — comma-separated WBS elements (all if omitted)
-      page / page_size — pagination
+    Return paginated Vendor Track records with the required 8 columns:
+      1. Vendor Detail
+      2. WBS Element
+      3. Material Code
+      4. Description
+      5. Quantity
+      6. Vendor Date
+      7. Proposed Date
+      8. Final Date
     """
     page = max(1, page)
     page_size = min(200, max(1, page_size))
@@ -286,7 +154,6 @@ def get_vt_records(
     conditions: list[str] = []
     values: list[Any] = []
 
-    # Vendor Track records are project-scoped; if no project_ids given show all
     pid_list: list[str] = []
     if project_ids:
         pid_list = [p.strip() for p in project_ids.split(",") if p.strip() and _valid_project_id(p.strip())]
@@ -311,7 +178,6 @@ def get_vt_records(
 
     try:
         with _connect_services_ro() as conn:
-            # Check table exists
             tables = {r[0].casefold(): r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )}
@@ -328,7 +194,10 @@ def get_vt_records(
                     "WBS Element",
                     "Material Code",
                     "Description",
-                    "Quantity"
+                    "Quantity",
+                    "Vendor Date",
+                    "Proposed Date",
+                    "Final Date"
                   FROM "vendor_track"{where}
                   ORDER BY "Vendor Detail", "WBS Element", "Material Code"
                   LIMIT ? OFFSET ?''',
@@ -342,6 +211,9 @@ def get_vt_records(
                     "material_code": r["Material Code"] or "",
                     "description": r["Description"] or "",
                     "quantity": r["Quantity"] if r["Quantity"] is not None else 0,
+                    "vendor_date": r["Vendor Date"] or "",
+                    "proposed_date": r["Proposed Date"] or "",
+                    "final_date": r["Final Date"] or "",
                 }
                 for r in rows
             ]
@@ -382,7 +254,7 @@ def get_vt_vendors(project_ids: str | None = None):
             )}
             if "vendor_track" not in tables:
                 return {"vendors": []}
-            # Add non-empty filter, chaining with existing WHERE if present
+
             nonempty_clause = (
                 " AND TRIM(COALESCE(\"Vendor Detail\",\"\")) <> \"\""
                 if conditions else
@@ -429,8 +301,14 @@ def get_vt_wbs_elements(
             )}
             if "vendor_track" not in tables:
                 return {"wbs_elements": []}
+
+            nonempty_clause = (
+                " AND TRIM(COALESCE(\"WBS Element\",\"\")) <> \"\""
+                if conditions else
+                " WHERE TRIM(COALESCE(\"WBS Element\",\"\")) <> \"\""
+            )
             rows = conn.execute(
-                f'SELECT DISTINCT "WBS Element" FROM "vendor_track"{where} '
+                f'SELECT DISTINCT "WBS Element" FROM "vendor_track"{where}{nonempty_clause} '
                 'ORDER BY "WBS Element"',
                 values,
             ).fetchall()
@@ -439,6 +317,42 @@ def get_vt_wbs_elements(
         return {"wbs_elements": []}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/export-date-request")
+def export_vendor_date_request_endpoint(body: VendorDateRequestExportModel):
+    """
+    Export currently filtered Vendor Track records for a single vendor to:
+    Vendor Registers/<vendor>/Outgoing/Vendor_Date_Request/<Remark>.xlsx
+    """
+    clean_vendor = body.vendor.strip() if body.vendor else ""
+    if not clean_vendor or clean_vendor in ("All Vendors", "All"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Please select a specific vendor from the Vendor filter before exporting. "
+                "Multi-vendor export is not allowed."
+            ),
+        )
+
+    try:
+        result = export_vendor_date_request(
+            vendor=clean_vendor,
+            project_ids=body.project_ids,
+            wbs_elements=body.wbs_elements,
+            db_path=SERVICES_DB,
+            output_root=VENDOR_REGISTERS_DIR,
+        )
+        return result
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err)) from val_err
+    except FileNotFoundError as fnf_err:
+        raise HTTPException(status_code=404, detail=str(fnf_err)) from fnf_err
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Vendor Date Request export failed: {exc}",
+        ) from exc
 
 
 def _empty_vt(page: int, page_size: int) -> dict:

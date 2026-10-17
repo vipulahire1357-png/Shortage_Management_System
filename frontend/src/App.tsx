@@ -259,7 +259,7 @@ type Row = {
   material_ref_code: string; wbs_element: string; material_code: string;
   material_description: string; zpp7_quantity: number; project_stock_quantity: number;
   po_quantity: number; open_po_quantity: number; pr_quantity: number;
-  net_shortage: number; free_stock: number; remarks: string; scope: string;
+  net_shortage: number; free_stock: number; vendor_detail: string; remarks: string; scope: string;
 };
 type Filters = { material_ref_code: string[]; wbs_element: string[]; material_code: string[]; scope: string[] };
 type Payload = {
@@ -286,6 +286,9 @@ interface VtRow {
   material_code: string;
   description: string;
   quantity: number;
+  vendor_date: string;
+  proposed_date: string;
+  final_date: string;
 }
 interface VtPayload {
   items: VtRow[];
@@ -293,6 +296,18 @@ interface VtPayload {
   page: number;
   page_size: number;
   pages: number;
+}
+interface ExportModalData {
+  vendor: string;
+  vendor_folder?: string;
+  project_count: number | string;
+  projects: string[];
+  wbs_elements: string | string[];
+  row_count: number;
+  remark: "First" | "Second";
+  filename: string;
+  output_path: string;
+  message: string;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -314,6 +329,7 @@ const columns: { key: keyof Row; label: string; numeric?: boolean }[] = [
   { key: "pr_quantity", label: "PR Qty", numeric: true },
   { key: "net_shortage", label: "Net Shortage", numeric: true },
   { key: "free_stock", label: "Free Stock", numeric: true },
+  { key: "vendor_detail", label: "Vendor Detail" },
   { key: "remarks", label: "Remarks" },
 ];
 const fmt = (v: number | string | undefined) => {
@@ -395,11 +411,35 @@ function InputPage({
   const [processLog, setProcessLog] = useState("");
   const [processError, setProcessError] = useState("");
   const [processSuccess, setProcessSuccess] = useState("");
+  const [exportingReg, setExportingReg] = useState(false);
+  const [exportRegSuccess, setExportRegSuccess] = useState("");
 
   const refreshProjects = async () => {
     setLoadingProjects(true);
     await onRefreshProjects();
     setLoadingProjects(false);
+  };
+
+  const runExportRegister = async () => {
+    if (!selectedProject) return;
+    setExportingReg(true);
+    setExportRegSuccess("");
+    setProcessError("");
+    try {
+      const res = await fetch(
+        `${API}/projects/${encodeURIComponent(selectedProject)}/export-register`,
+        { method: "POST" },
+      );
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.detail || "Export failed.");
+      setExportRegSuccess(
+        `Material Shortage Register saved: ${result.filename} (${result.rows} rows). Path: ${result.path}`
+      );
+    } catch (e) {
+      setProcessError(e instanceof Error ? e.message : "Export failed.");
+    } finally {
+      setExportingReg(false);
+    }
   };
 
   /* Load files + status when project changes */
@@ -556,30 +596,47 @@ function InputPage({
             {/* Process panel */}
             <div className="process-panel">
               <div className="process-panel-text">
-                <div className="process-title">Run Shortage Calculation</div>
+                <div className="process-title">Run Shortage Calculation &amp; Register Export</div>
                 <div className="process-desc">
-                  Stages all reports into <code>data/raw/</code> then runs parsers and shortage
-                  calculation. Source files in <code>projects/</code> and <code>global/</code> are
-                  never modified.
+                  Stages all reports into <code>data/raw/</code>, runs parsers and shortage calculation,
+                  and generates the Material Shortage Register workbook in <code>Material Shortage Registers/</code>.
                 </div>
               </div>
-              <button
-                id="process-all-btn"
-                className="primary-button process-btn"
-                disabled={!canProcess}
-                onClick={runProcessing}
-                title={
-                  !selectedProject ? "Select a project first"
-                    : !status?.ready ? "Some required reports are missing"
-                    : "Stage reports and run processing"
-                }
-              >
-                {processing
-                  ? <><LoaderCircle className="spin" size={16} /> Processing…</>
-                  : <><Activity size={16} /> Process All Reports</>}
-              </button>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                <button
+                  id="export-register-btn"
+                  className="outline-button"
+                  disabled={!selectedProject || exportingReg || processing}
+                  onClick={runExportRegister}
+                  title="Export or regenerate Material Shortage Register workbook for this project"
+                >
+                  {exportingReg
+                    ? <><LoaderCircle className="spin" size={14} /> Exporting…</>
+                    : <><FileSpreadsheet size={14} /> Export Register</>}
+                </button>
+                <button
+                  id="process-all-btn"
+                  className="primary-button process-btn"
+                  disabled={!canProcess}
+                  onClick={runProcessing}
+                  title={
+                    !selectedProject ? "Select a project first"
+                      : !status?.ready ? "Some required reports are missing"
+                      : "Stage reports and run processing"
+                  }
+                >
+                  {processing
+                    ? <><LoaderCircle className="spin" size={16} /> Processing…</>
+                    : <><Activity size={16} /> Process All Reports</>}
+                </button>
+              </div>
             </div>
 
+            {exportRegSuccess && (
+              <div className="upload-message success-text">
+                <CheckCircle size={14} /> {exportRegSuccess}
+              </div>
+            )}
             {processSuccess && (
               <div className="upload-message success-text">
                 <CheckCircle size={14} /> {processSuccess}
@@ -764,12 +821,50 @@ function VendorTrackPage() {
     }
   };
 
+  const [exporting, setExporting] = useState(false);
+  const [exportModalData, setExportModalData] = useState<ExportModalData | null>(null);
+
+  const handleExportDateRequest = async () => {
+    setProcessError("");
+    setProcessMsg("");
+    if (!selectedVendor || selectedVendor === "All Vendors") {
+      setProcessError("Please select a specific vendor from the Vendor filter before exporting. Multi-vendor export is not allowed.");
+      return;
+    }
+    if (processedProjectIds.length === 0) {
+      setProcessError("Load Vendor Track records before exporting.");
+      return;
+    }
+    setExporting(true);
+    try {
+      const res = await fetch(`${API}/vendor-track/export-date-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendor: selectedVendor,
+          project_ids: processedProjectIds,
+          wbs_elements: selectedWbs.length ? selectedWbs : null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Export failed.");
+      setExportModalData(data);
+    } catch (e) {
+      setProcessError(e instanceof Error ? e.message : "Export failed.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const vtColumns = [
     { key: "vendor_detail", label: "Vendor Detail" },
     { key: "wbs_element", label: "WBS Element" },
     { key: "material_code", label: "Material Code" },
     { key: "description", label: "Description" },
     { key: "quantity", label: "Quantity", numeric: true },
+    { key: "vendor_date", label: "Vendor Date" },
+    { key: "proposed_date", label: "Proposed Date" },
+    { key: "final_date", label: "Final Date" },
   ] as const;
 
   return (
@@ -781,6 +876,9 @@ function VendorTrackPage() {
           <div className="vt-section-head">
             <FolderOpen size={13} />
             <span>PROJECTS</span>
+            <span style={{ fontSize: 9, fontWeight: 500, color: "#8d8f97", marginLeft: "auto" }}>
+              from Material Shortage Registers/
+            </span>
           </div>
           <div className="vt-project-controls">
             <button className="vt-ctrl-btn" onClick={selectAll} disabled={projects.length === 0}>
@@ -789,7 +887,7 @@ function VendorTrackPage() {
             <button className="vt-ctrl-btn" onClick={clearSelection} disabled={selectedProjects.size === 0}>
               None
             </button>
-            <button className="vt-ctrl-btn" onClick={loadProjects} title="Refresh projects">
+            <button className="vt-ctrl-btn" onClick={loadProjects} title="Refresh project registers">
               <RefreshCw size={11} className={loadingProjects ? "spin" : ""} />
             </button>
           </div>
@@ -797,7 +895,11 @@ function VendorTrackPage() {
           {loadingProjects ? (
             <div className="vt-empty-hint"><LoaderCircle size={14} className="spin" /> Loading…</div>
           ) : projects.length === 0 ? (
-            <div className="vt-empty-hint">No projects found in <code>projects/</code></div>
+            <div className="vt-empty-hint">
+              <FolderOpen size={20} style={{ margin: "4px auto 8px", display: "block", color: "#888" }} />
+              No register files found in <code>Material Shortage Registers/</code>.<br />
+              Generate a project register in <strong>Input &amp; Imports</strong> first.
+            </div>
           ) : (
             <div className="vt-project-list">
               {projects.map(id => (
@@ -897,7 +999,7 @@ function VendorTrackPage() {
         )}
 
         {/* Table card */}
-        <section className="table-card">
+        <section className="table-card vt-register-card">
           <div className="table-heading">
             <div>
               <h2>Vendor Track Register</h2>
@@ -908,6 +1010,25 @@ function VendorTrackPage() {
               </p>
             </div>
             <div className="table-actions">
+              <button
+                id="export-vendor-date-request-btn"
+                className="primary-button"
+                onClick={handleExportDateRequest}
+                disabled={processedProjectIds.length === 0 || vtLoading || exporting}
+                title={
+                  processedProjectIds.length === 0
+                    ? "Load Vendor Track records first"
+                    : selectedVendor === "All Vendors"
+                    ? "Select a specific vendor from the Vendor filter before exporting"
+                    : `Export Vendor Date Request for ${selectedVendor}`
+                }
+              >
+                {exporting ? (
+                  <><LoaderCircle size={14} className="spin" /> Exporting…</>
+                ) : (
+                  <><FileSpreadsheet size={14} /> Export Vendor Date Request</>
+                )}
+              </button>
               <label className="page-size">
                 Rows <select value={vtPageSize} onChange={e => { setVtPageSize(Number(e.target.value)); setVtPage(1); }}>
                   <option>25</option><option>50</option><option>100</option><option>200</option>
@@ -922,12 +1043,12 @@ function VendorTrackPage() {
             </div>
           </div>
 
-          <div className="table-scroll">
-            <table>
+          <div className="table-scroll vt-table-scroll">
+            <table className="vt-table">
               <thead>
                 <tr>
                   {vtColumns.map(col => (
-                    <th key={col.key} className={col.numeric ? "numeric" : ""}>{col.label}</th>
+                    <th key={col.key} className={`${col.numeric ? "numeric" : ""} vt-col-${col.key}`}>{col.label}</th>
                   ))}
                 </tr>
               </thead>
@@ -952,7 +1073,7 @@ function VendorTrackPage() {
                 ) : vtPayload?.items.map((row, idx) => (
                   <tr key={`${row.material_code}-${row.wbs_element}-${idx}`}>
                     {vtColumns.map(col => (
-                      <td key={col.key} className={col.numeric ? "numeric" : ""}>
+                      <td key={col.key} className={`${col.numeric ? "numeric" : ""} vt-col-${col.key}`}>
                         {col.key === "quantity"
                           ? <span className={`shortage-pill ${Number(row.quantity) > 0 ? "has-shortage" : "no-shortage"}`}>
                               {fmt(row.quantity)}
@@ -987,6 +1108,76 @@ function VendorTrackPage() {
           Data is read-only — modify source project files and reprocess to update.
         </div>
       </div>
+
+      {/* ── Export Result Modal ──────────────────────── */}
+      {exportModalData && (
+        <div className="modal-overlay" onClick={() => setExportModalData(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
+              <div className="modal-title">
+                <CheckCircle size={18} style={{ color: "#217a4d" }} />
+                <span>Vendor Date Request Exported</span>
+              </div>
+              <button className="modal-close" onClick={() => setExportModalData(null)} title="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="upload-message success-text">
+                <CheckCircle size={15} />
+                <span>{exportModalData.message}</span>
+              </div>
+
+              <div className="export-meta-grid">
+                <div className="meta-label">Vendor Name:</div>
+                <div className="meta-val">{exportModalData.vendor}</div>
+
+                <div className="meta-label">Selected Projects:</div>
+                <div className="meta-val">
+                  {exportModalData.project_count} project{exportModalData.project_count !== 1 ? "s" : ""}
+                  {Array.isArray(exportModalData.projects) && exportModalData.projects.length > 0 && (
+                    <span style={{ color: "#777", fontWeight: 400, marginLeft: 6 }}>
+                      ({exportModalData.projects.join(", ")})
+                    </span>
+                  )}
+                </div>
+
+                <div className="meta-label">WBS Elements:</div>
+                <div className="meta-val">
+                  {Array.isArray(exportModalData.wbs_elements)
+                    ? exportModalData.wbs_elements.join(", ")
+                    : exportModalData.wbs_elements}
+                </div>
+
+                <div className="meta-label">Exported Rows:</div>
+                <div className="meta-val">{exportModalData.row_count}</div>
+
+                <div className="meta-label">Calculated Remark:</div>
+                <div className="meta-val">
+                  <span className={`remark-badge ${exportModalData.remark.toLowerCase()}`}>
+                    {exportModalData.remark}
+                  </span>
+                </div>
+
+                <div className="meta-label">Saved Filename:</div>
+                <div className="meta-val">{exportModalData.filename}</div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 5 }}>
+                  Exact Output File Location:
+                </div>
+                <div className="path-box">{exportModalData.output_path}</div>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="primary-button" onClick={() => setExportModalData(null)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1099,18 +1290,18 @@ export default function App() {
   };
 
   const pageTitle: Record<typeof page, string> = {
-    shortage: "Shortage Management",
+    shortage: "Material Shortage Register",
     input: "Input & Imports",
     vendortrack: "Vendor Track",
   };
   const pageSubtitle: Record<typeof page, string> = {
-    shortage: "Monitor material availability and procurement gaps.",
+    shortage: "Material-level inventory and procurement position.",
     input: "Select a project, verify required reports, and run shortage calculations.",
     vendortrack: "Consolidate and track vendor-wise shortage records across multiple projects.",
   };
 
   return (
-    <div className={`app-shell${sidebarOpen ? "" : " sidebar-collapsed"}`}>
+    <div className={`app-shell${sidebarOpen ? "" : " sidebar-collapsed"} app-shell-${page}`}>
       {/* ── Sidebar ───────────────────────────────────── */}
       <aside className={`sidebar${sidebarOpen ? "" : " collapsed"}`}>
         <div className="brand">
@@ -1129,7 +1320,7 @@ export default function App() {
           <div className="sidebar-caption">WORKSPACE</div>
           <button className={`nav-item ${page === "shortage" ? "active" : ""}`}
             onClick={() => setPage("shortage")}>
-            <LayoutDashboard size={18} /> Shortage Management
+            <LayoutDashboard size={18} /> Material Shortage Register
           </button>
           <button className={`nav-item ${page === "input" ? "active" : ""}`}
             onClick={() => setPage("input")}>
@@ -1187,7 +1378,7 @@ export default function App() {
         {!sidebarOpen && (
           <div className="sidebar-icons-collapsed">
             <button className={`nav-icon${page === "shortage" ? " active" : ""}`}
-              onClick={() => setPage("shortage")} title="Shortage Management">
+              onClick={() => setPage("shortage")} title="Material Shortage Register">
               <LayoutDashboard size={20} />
             </button>
             <button className={`nav-icon${page === "input" ? " active" : ""}`}
@@ -1203,7 +1394,7 @@ export default function App() {
       </aside>
 
       {/* ── Main content ─────────────────────────────── */}
-      <main className="main">
+      <main className={`main main-${page}`}>
         <header className="topbar">
           <div>
             <div className="eyebrow">ABB · MATERIAL PLANNING</div>
@@ -1232,7 +1423,7 @@ export default function App() {
             <section className="table-card">
               <div className="table-heading">
                 <div>
-                  <h2>Material shortage register</h2>
+                  <h2>Material Shortage Register</h2>
                   <p>Material-level inventory and procurement position</p>
                 </div>
                 <div className="table-actions">

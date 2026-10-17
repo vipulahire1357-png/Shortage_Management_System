@@ -19,7 +19,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from .database import GLOBAL_DIR, PROJECTS_DIR, RAW_DIR, REPORTS, ROOT
+from .database import GLOBAL_DIR, PROJECTS_DIR, RAW_DIR, REPORTS, ROOT, SHORTAGE_REGISTERS_DIR
+from services.shortage_export import export_material_shortage_register
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -52,6 +53,9 @@ def _is_pr(p: Path) -> bool:
         or "purchase requisition" in stem
     )
 
+def _is_me2m(p: Path) -> bool:
+    return "me2m" in p.name.casefold() and p.suffix.lower() in {".xls", ".xlsx", ".xlsm", ".xlsb"}
+
 def _is_scopelist(p: Path) -> bool:
     return "material_scope_list" in p.name.casefold()
 
@@ -60,6 +64,7 @@ PROJECT_REPORT_CLASSIFIERS: list[tuple[str, Any]] = [
     ("mb25", _is_mb25),
     ("me2j", _is_me2j),
     ("pr", _is_pr),
+    ("me2m", _is_me2m),
 ]
 
 GLOBAL_REPORT_CLASSIFIERS: list[tuple[str, Any]] = [
@@ -67,8 +72,8 @@ GLOBAL_REPORT_CLASSIFIERS: list[tuple[str, Any]] = [
     ("scopelist", _is_scopelist),
 ]
 
-# The four project-specific reports that must be present before processing.
-REQUIRED_PROJECT_KEYS = {"zpp7", "mb25", "me2j", "pr"}
+# The project-specific reports that must be present before processing.
+REQUIRED_PROJECT_KEYS = {"zpp7", "mb25", "me2j", "pr", "me2m"}
 # The two global reports required for processing.
 REQUIRED_GLOBAL_KEYS = {"mb52", "scopelist"}
 
@@ -275,7 +280,7 @@ def process_project(project_id: str):
     # files from different projects. README.md and other non-report files are kept.
     known_stems = {v["stem"].casefold() for v in REPORTS.values()}
     for existing in list(RAW_DIR.iterdir()):
-        if existing.is_file() and existing.stem.casefold() in known_stems:
+        if existing.is_file() and (existing.stem.casefold() in known_stems or "me2m" in existing.stem.casefold()):
             existing.unlink()
 
     # ── Stage files ───────────────────────────────────────────────────────────
@@ -322,6 +327,13 @@ def process_project(project_id: str):
             detail=output[-12000:] or "Processing failed.",
         )
 
+    # Export Material Shortage Register workbook
+    register_info = None
+    try:
+        register_info = export_material_shortage_register(project_id)
+    except Exception as exc:
+        output += f"\n[Warning] Material Shortage Register export failed: {exc}"
+
     return {
         "project_id": project_id,
         "staged_files": sorted(staged),
@@ -329,5 +341,46 @@ def process_project(project_id: str):
             f"Project '{project_id}' processed successfully. "
             "All report parsers and shortage calculation completed."
         ),
+        "register_file": register_info["filename"] if register_info else None,
+        "register_path": register_info["path"] if register_info else None,
+        "register_rows": register_info["rows"] if register_info else 0,
         "output": output[-12000:],
     }
+
+
+@router.post("/{project_id}/export-register")
+def export_project_register_endpoint(project_id: str):
+    """Generate or update the Material Shortage Register Excel file for this project."""
+    if not _valid_project_id(project_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid project ID {project_id!r}.",
+        )
+    try:
+        info = export_material_shortage_register(project_id)
+        return {
+            "message": f"Material Shortage Register exported to {info['filename']}.",
+            **info,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{project_id}/register-info")
+def get_project_register_info(project_id: str):
+    """Check if the Material Shortage Register workbook exists for this project."""
+    if not _valid_project_id(project_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid project ID {project_id!r}.",
+        )
+    target = SHORTAGE_REGISTERS_DIR / f"{project_id}.xlsx"
+    exists = target.is_file()
+    return {
+        "project_id": project_id,
+        "exists": exists,
+        "filename": target.name if exists else None,
+        "path": str(target.resolve()) if exists else None,
+        "size_bytes": target.stat().st_size if exists else 0,
+    }
+
