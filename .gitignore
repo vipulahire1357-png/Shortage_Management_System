@@ -110,10 +110,18 @@ Material Shortage Registers/*.xls
 Material Shortage Registers/*.xlsx
 Material Shortage Registers/*.xlsm
 Material Shortage Registers/*.xlsb
+Material Shortage Registers/*.XLS
+Material Shortage Registers/*.XLSX
+Material Shortage Registers/*.XLSM
+Material Shortage Registers/*.XLSB
 Material Shortage Registers/**/*.xls
 Material Shortage Registers/**/*.xlsx
 Material Shortage Registers/**/*.xlsm
 Material Shortage Registers/**/*.xlsb
+Material Shortage Registers/**/*.XLS
+Material Shortage Registers/**/*.XLSX
+Material Shortage Registers/**/*.XLSM
+Material Shortage Registers/**/*.XLSB
 
 # Generated Vendor Registers and vendor-facing Excel files
 # Ignore workbook files only; preserve vendor and workflow folder structure.
@@ -121,10 +129,18 @@ Vendor Registers/*.xls
 Vendor Registers/*.xlsx
 Vendor Registers/*.xlsm
 Vendor Registers/*.xlsb
+Vendor Registers/*.XLS
+Vendor Registers/*.XLSX
+Vendor Registers/*.XLSM
+Vendor Registers/*.XLSB
 Vendor Registers/**/*.xls
 Vendor Registers/**/*.xlsx
 Vendor Registers/**/*.xlsm
 Vendor Registers/**/*.xlsb
+Vendor Registers/**/*.XLS
+Vendor Registers/**/*.XLSX
+Vendor Registers/**/*.XLSM
+Vendor Registers/**/*.XLSB
 
 # Microsoft Excel temporary/lock files
 ~$*.xls*
