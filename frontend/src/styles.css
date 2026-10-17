@@ -509,3 +509,51 @@
   border-top: 1px solid #ececf0;
   background: #fafbfc;
 }
+
+/* ── Vendor Track Sub-navigation ── */
+.vt-sub-nav {
+  display: flex;
+  gap: 2px;
+  padding: 12px 20px 0;
+  border-bottom: 2px solid #e5e6e9;
+  background: #fff;
+  flex-shrink: 0;
+}
+.vt-sub-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border: 0;
+  background: transparent;
+  color: #777a84;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+.vt-sub-tab:hover { color: #444; }
+.vt-sub-tab.active {
+  color: #b5121b;
+  border-bottom-color: #b5121b;
+}
+
+/* ── Vendor Import page rows ── */
+.import-row-new td { background: #f0fbf4 !important; }
+.import-row-unmatched td { background: #fffbf0 !important; }
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge-ok { background: #e8f7ee; color: #218253; }
+.badge-miss { background: #fef3e0; color: #9a6b1e; }
+.file-name { font-size: 12px; font-weight: 600; color: #33363d; }
+.file-label { font-size: 10px; color: #93959c; margin-top: 2px; }

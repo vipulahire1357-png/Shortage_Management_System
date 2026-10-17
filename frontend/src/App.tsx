@@ -658,7 +658,347 @@ function InputPage({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Vendor Track page
+   Vendor Import types
+═══════════════════════════════════════════════════════════ */
+interface ImportFile {
+  vendor_folder: string;
+  filename: string;
+  relative_path: string;
+  absolute_path: string;
+  size_bytes: number;
+  modified_at: string;
+  is_outgoing: boolean;
+}
+interface PreviewItem {
+  row_index: number;
+  project_id: string;
+  wbs_element: string;
+  material_code: string;
+  description: string;
+  vendor: string;
+  quantity: number | null;
+  vendor_date: string;
+  proposed_date: string;
+  final_date: string;
+  current_final_date: string;
+  matched: boolean;
+  status: "MATCHED" | "MATCHED_NEW_DATE" | "UNMATCHED";
+}
+interface PreviewResult {
+  filename: string;
+  total_rows: number;
+  matched_rows: number;
+  unmatched_rows: number;
+  changed_dates_count: number;
+  items: PreviewItem[];
+}
+interface ImportHistory {
+  id: number;
+  filename: string;
+  imported_at: string;
+  rows_updated: number;
+  affected_projects: string;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Vendor Track Import page
+═══════════════════════════════════════════════════════════ */
+function VendorImportPage() {
+  const [files, setFiles] = useState<ImportFile[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<ImportFile | null>(null);
+  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applyResult, setApplyResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [error, setError] = useState("");
+  const [history, setHistory] = useState<ImportHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const loadFiles = useCallback(async () => {
+    setLoadingFiles(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/vendor-track/import/discover`);
+      if (!res.ok) throw new Error("Failed to discover vendor files.");
+      const data = await res.json();
+      setFiles(data.files ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load files.");
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, []);
+
+  const loadHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetch(`${API}/vendor-track/import/history`);
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data.history ?? []);
+      }
+    } catch { /* non-blocking */ }
+    finally { setLoadingHistory(false); }
+  }, []);
+
+  useEffect(() => { loadFiles(); loadHistory(); }, [loadFiles, loadHistory]);
+
+  const handlePreview = async (file: ImportFile) => {
+    setSelectedFile(file);
+    setPreviewing(true);
+    setPreview(null);
+    setApplyResult(null);
+    setError("");
+    try {
+      const res = await fetch(`${API}/vendor-track/import/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_path: file.absolute_path }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Preview failed.");
+      setPreview(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Preview failed.");
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleApply = async () => {
+    if (!selectedFile) return;
+    setShowConfirm(false);
+    setApplying(true);
+    setError("");
+    setApplyResult(null);
+    try {
+      const res = await fetch(`${API}/vendor-track/import/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_path: selectedFile.absolute_path }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Apply failed.");
+      setApplyResult(data);
+      loadHistory();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Apply failed.");
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const incomingFiles = files.filter(f => !f.is_outgoing);
+
+  return (
+    <div className="vt-page">
+      {/* ── Sidebar: file list ─────────────────────────── */}
+      <div className="vt-sidebar">
+        <div className="vt-sidebar-section">
+          <div className="vt-section-head">
+            <FolderOpen size={13} />
+            <span>VENDOR RESPONSE FILES</span>
+          </div>
+          <div className="vt-project-controls">
+            <button className="vt-ctrl-btn" onClick={loadFiles} title="Refresh file list">
+              <RefreshCw size={11} className={loadingFiles ? "spin" : ""} />
+            </button>
+          </div>
+
+          {loadingFiles ? (
+            <div className="vt-empty-hint"><LoaderCircle size={14} className="spin" /> Scanning…</div>
+          ) : incomingFiles.length === 0 ? (
+            <div className="vt-empty-hint">
+              <FolderOpen size={20} style={{ margin: "4px auto 8px", display: "block", color: "#888" }} />
+              No vendor response files found.<br />
+              Place vendor workbooks in <code>Vendor Date Registers/</code> or <code>Vendor Registers/</code>.
+            </div>
+          ) : (
+            <div className="vt-project-list">
+              {incomingFiles.map(f => (
+                <div
+                  key={f.absolute_path}
+                  className={`vt-project-item${selectedFile?.absolute_path === f.absolute_path ? " vt-project-checked" : ""}`}
+                  onClick={() => handlePreview(f)}
+                  role="button" tabIndex={0}
+                  onKeyDown={e => e.key === "Enter" && handlePreview(f)}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="file-name" style={{ wordBreak: "break-all" }}>{f.filename}</div>
+                    <div className="file-label">{f.vendor_folder} · {f.modified_at}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Import history */}
+        {history.length > 0 && (
+          <div className="vt-sidebar-section vt-filters-section">
+            <div className="vt-section-head">
+              <Activity size={13} />
+              <span>IMPORT HISTORY</span>
+            </div>
+            <div className="vt-project-list" style={{ maxHeight: 200, overflow: "auto" }}>
+              {history.slice(0, 10).map(h => (
+                <div key={h.id} className="vt-project-item" style={{ cursor: "default" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="file-name" style={{ fontSize: 11 }}>{h.filename}</div>
+                    <div className="file-label">{h.imported_at} · {h.rows_updated} rows</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Main content ──────────────────────────── */}
+      <div className="vt-main">
+        {error && (
+          <div className="upload-message error-text" style={{ marginBottom: 16 }}>
+            <AlertTriangle size={14} /> {error}
+          </div>
+        )}
+        {applyResult && (
+          <div className="upload-message success-text" style={{ marginBottom: 16 }}>
+            <CheckCircle size={14} /> {applyResult.message}
+          </div>
+        )}
+
+        <section className="table-card vt-register-card">
+          <div className="table-heading">
+            <div>
+              <h2>Vendor Response Import</h2>
+              <p>
+                {selectedFile
+                  ? `Previewing: ${selectedFile.filename}`
+                  : "Select a vendor response file to preview and import dates."}
+              </p>
+            </div>
+            <div className="table-actions">
+              {preview && preview.changed_dates_count > 0 && (
+                <button
+                  className="primary-button"
+                  onClick={() => setShowConfirm(true)}
+                  disabled={applying}
+                >
+                  {applying ? (
+                    <><LoaderCircle size={14} className="spin" /> Applying…</>
+                  ) : (
+                    <><CheckCircle size={14} /> Apply {preview.changed_dates_count} Date(s)</>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {preview && (
+            <div className="table-toolbar">
+              <div className="result-count">
+                {preview.total_rows} rows · {preview.matched_rows} matched ·{" "}
+                <strong style={{ color: "#217a4d" }}>{preview.changed_dates_count} new dates</strong> ·{" "}
+                {preview.unmatched_rows} unmatched
+              </div>
+            </div>
+          )}
+
+          <div className="table-scroll vt-table-scroll">
+            <table className="vt-table">
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>WBS Element</th>
+                  <th>Material Code</th>
+                  <th>Vendor</th>
+                  <th>Final Date (New)</th>
+                  <th>Final Date (Current)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {previewing ? (
+                  <tr><td colSpan={6} className="empty-cell">
+                    <LoaderCircle className="spin" size={22} /> Validating and previewing…
+                  </td></tr>
+                ) : !preview ? (
+                  <tr><td colSpan={6} className="empty-cell">
+                    <FileSpreadsheet size={28} style={{ display: "block", margin: "0 auto 10px" }} />
+                    Select a vendor response file from the sidebar to preview changes.
+                  </td></tr>
+                ) : preview.items.length === 0 ? (
+                  <tr><td colSpan={6} className="empty-cell">
+                    No data rows found in the file.
+                  </td></tr>
+                ) : preview.items.map((item, idx) => (
+                  <tr key={idx} className={
+                    item.status === "MATCHED_NEW_DATE" ? "import-row-new"
+                      : item.status === "UNMATCHED" ? "import-row-unmatched"
+                      : ""
+                  }>
+                    <td>
+                      <span className={`status-badge ${
+                        item.status === "MATCHED_NEW_DATE" ? "badge-ok"
+                          : item.status === "MATCHED" ? "badge-ok"
+                          : "badge-miss"
+                      }`}>
+                        {item.status === "MATCHED_NEW_DATE" ? <><CheckCircle size={11} /> New Date</>
+                          : item.status === "MATCHED" ? <><CheckCircle size={11} /> Matched</>
+                          : <><XCircle size={11} /> Unmatched</>}
+                      </span>
+                    </td>
+                    <td>{item.wbs_element || "—"}</td>
+                    <td><span className="material-code">{item.material_code || "—"}</span></td>
+                    <td>{item.vendor || "—"}</td>
+                    <td style={{ fontWeight: item.status === "MATCHED_NEW_DATE" ? 700 : 400, color: item.status === "MATCHED_NEW_DATE" ? "#217a4d" : undefined }}>
+                      {item.final_date || "—"}
+                    </td>
+                    <td style={{ color: "#888" }}>{item.current_final_date || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      {/* ── Confirmation dialog ── */}
+      {showConfirm && (
+        <div className="modal-overlay" onClick={() => setShowConfirm(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
+              <div className="modal-title">
+                <AlertTriangle size={18} style={{ color: "#e07000" }} />
+                <span>Confirm Import</span>
+              </div>
+              <button className="modal-close" onClick={() => setShowConfirm(false)}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <p>
+                This will update <strong>{preview?.changed_dates_count ?? 0}</strong> Final Date(s)
+                in the shortage database and refresh affected Material Shortage Registers.
+              </p>
+              <p style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
+                File: <strong>{selectedFile?.filename}</strong>
+              </p>
+            </div>
+            <div className="modal-foot">
+              <button className="outline-button" onClick={() => setShowConfirm(false)}>Cancel</button>
+              <button className="primary-button" onClick={handleApply}>
+                <CheckCircle size={14} /> Apply Dates
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Vendor Track page (Export)
 ═══════════════════════════════════════════════════════════ */
 function VendorTrackPage() {
   // Project selection state
@@ -1189,6 +1529,7 @@ function VendorTrackPage() {
 ═══════════════════════════════════════════════════════════ */
 export default function App() {
   const [page, setPage] = useState<"shortage" | "input" | "vendortrack">("input");
+  const [vtSubPage, setVtSubPage] = useState<"export" | "import">("export");
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   /* Shortage page state */
@@ -1523,8 +1864,20 @@ export default function App() {
             onRefreshProjects={loadProjects}
           />
         ) : (
-          /* ── Vendor Track page ── */
-          <VendorTrackPage />
+          /* ── Vendor Track page with sub-nav ── */
+          <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <div className="vt-sub-nav">
+              <button className={`vt-sub-tab${vtSubPage === "export" ? " active" : ""}`}
+                onClick={() => setVtSubPage("export")}>
+                <FileDown size={14} /> Export
+              </button>
+              <button className={`vt-sub-tab${vtSubPage === "import" ? " active" : ""}`}
+                onClick={() => setVtSubPage("import")}>
+                <UploadCloud size={14} /> Import
+              </button>
+            </div>
+            {vtSubPage === "export" ? <VendorTrackPage /> : <VendorImportPage />}
+          </div>
         )}
       </main>
     </div>

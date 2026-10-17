@@ -19,9 +19,15 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .database import ROOT, SERVICES_DB, SHORTAGE_REGISTERS_DIR, VENDOR_REGISTERS_DIR
+from .database import ROOT, SERVICES_DB, SHORTAGE_REGISTERS_DIR, VENDOR_REGISTERS_DIR, VENDOR_DATE_REGISTERS_DIR
 from services.vendortrack_service import refresh_vendor_track_from_registers
 from services.vendor_request_export import export_vendor_date_request
+from services.vendor_import_service import (
+    discover_vendor_response_files,
+    preview_vendor_response,
+    apply_vendor_response,
+    get_import_history,
+)
 
 router = APIRouter(prefix="/api/vendor-track", tags=["vendor-track"])
 
@@ -386,3 +392,96 @@ def _empty_vt(page: int, page_size: int) -> dict:
         "page_size": page_size,
         "pages": 1,
     }
+
+
+# ── Vendor Track Import endpoints ─────────────────────────────────────────────
+
+class VendorImportApplyModel(BaseModel):
+    file_path: str
+
+
+@router.get("/import/discover")
+def discover_import_files():
+    """
+    Scan Vendor Registers/ and Vendor Date Registers/ for candidate
+    vendor response workbooks that can be imported.
+    """
+    try:
+        candidates = discover_vendor_response_files(
+            vendor_registers_dir=VENDOR_REGISTERS_DIR,
+            vendor_date_registers_dir=VENDOR_DATE_REGISTERS_DIR,
+        )
+        return {
+            "files": candidates,
+            "total": len(candidates),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/import/preview")
+def preview_import_file(body: VendorImportApplyModel):
+    """
+    Validate and preview a vendor response workbook.
+    Shows which rows match existing records and which Final Dates would change.
+    """
+    file_path = Path(body.file_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path.name}")
+
+    # Security: ensure path is within allowed directories
+    resolved = file_path.resolve()
+    allowed_roots = [VENDOR_REGISTERS_DIR.resolve(), VENDOR_DATE_REGISTERS_DIR.resolve()]
+    if not any(str(resolved).startswith(str(root)) for root in allowed_roots):
+        raise HTTPException(
+            status_code=403,
+            detail="File is outside the allowed Vendor Registers directories.",
+        )
+
+    try:
+        result = preview_vendor_response(file_path, db_path=SERVICES_DB)
+        return result
+    except (ValueError, FileNotFoundError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/import/apply")
+def apply_import_file(body: VendorImportApplyModel):
+    """
+    Apply accepted Final Dates from a vendor response workbook to durable storage
+    (net_shortage + vendor_track) and refresh affected Material Shortage Registers.
+    """
+    file_path = Path(body.file_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path.name}")
+
+    resolved = file_path.resolve()
+    allowed_roots = [VENDOR_REGISTERS_DIR.resolve(), VENDOR_DATE_REGISTERS_DIR.resolve()]
+    if not any(str(resolved).startswith(str(root)) for root in allowed_roots):
+        raise HTTPException(
+            status_code=403,
+            detail="File is outside the allowed Vendor Registers directories.",
+        )
+
+    try:
+        result = apply_vendor_response(
+            file_path,
+            db_path=SERVICES_DB,
+            registers_dir=SHORTAGE_REGISTERS_DIR,
+        )
+        return result
+    except (ValueError, FileNotFoundError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/import/history")
+def get_import_history_endpoint():
+    """Return the import audit log (last 50 entries)."""
+    try:
+        return {"history": get_import_history(db_path=SERVICES_DB)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
