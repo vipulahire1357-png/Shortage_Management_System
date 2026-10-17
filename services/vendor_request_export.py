@@ -228,8 +228,11 @@ def export_vendor_date_request(
     if not db_path.is_file():
         raise FileNotFoundError(f"Services database not found: {db_path}")
 
-    # Build query
-    conditions: list[str] = ['"Vendor Detail" = ?']
+    # Build query: export only rows with a strictly positive quantity.
+    conditions: list[str] = [
+        '"Vendor Detail" = ?',
+        '"Quantity" > 0',
+    ]
     params: list[Any] = [clean_vendor]
 
     if project_ids:
