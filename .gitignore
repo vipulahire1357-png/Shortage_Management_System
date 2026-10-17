@@ -1,15 +1,13 @@
 # ============================================================
-# ABB Shortage Management System — .gitignore
-# Ignore local environments, caches, operational SAP data,
-# generated databases, and generated register workbooks.
-# Keep source code, dependency manifests, docs, and folder markers.
+# ABB Shortage Management System
+# Keep source code, project configuration, dependency manifests,
+# and documentation in Git. Ignore local/runtime/generated data.
 # ============================================================
 
-# Python bytecode and caches
+# Python caches and test artifacts
 __pycache__/
 *.py[cod]
 *$py.class
-.python-version
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -24,7 +22,7 @@ env/
 ENV/
 .conda/
 
-# Local environment/secrets
+# Local environment variables and credentials
 .env
 .env.*
 !.env.example
@@ -32,7 +30,7 @@ ENV/
 *.pem
 *.key
 
-# IDEs and OS files
+# IDE and operating-system files
 .vscode/
 .idea/
 *.swp
@@ -42,23 +40,26 @@ ENV/
 Thumbs.db
 Desktop.ini
 
-# Frontend / Node.js build artifacts
-frontend/node_modules/
+# Node.js dependencies and Vite build/cache output
+node_modules/
 frontend/dist/
 frontend/.vite/
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 
-# Local logs and temporary files
+# Logs and temporary files
 logs/*
 !logs/.gitkeep
 !logs/README.md
 *.log
 *.tmp
 *.temp
+*.bak
+*.backup
+*.old
 
-# SQLite databases and sidecar files
+# SQLite databases and journal / write-ahead-log files
 *.db
 *.sqlite
 *.sqlite3
@@ -69,7 +70,7 @@ logs/*
 *.sqlite-wal
 *.sqlite-shm
 
-# Staging and processed data — preserve explanatory files/markers
+# Runtime staging and processed data; retain documentation/placeholders
 data/raw/*
 !data/raw/README.md
 data/processed/*
@@ -77,8 +78,9 @@ data/processed/*
 data/*.db
 data/**/*.db
 
-# Project-specific SAP source reports.
-# These are operational inputs and should stay local, not in source control.
+# Project-specific operational report files
+# Project directories can exist in Git, but local SAP workbooks/reports
+# should not be newly added to source control.
 projects/**/*.xls
 projects/**/*.xlsx
 projects/**/*.xlsm
@@ -90,7 +92,7 @@ projects/**/*.txt
 projects/**/*.tsv
 projects/**/*.pdf
 
-# Shared/global SAP source reports
+# Shared/global operational SAP report files
 global/**/*.xls
 global/**/*.xlsx
 global/**/*.xlsm
@@ -103,24 +105,16 @@ global/**/*.tsv
 global/**/*.pdf
 
 # Generated Material Shortage Register exports
-# Keep the directory and its generated workbooks out of Git.
+# Keep the output directory but ignore generated project workbooks.
 Material Shortage Registers/*
 !Material Shortage Registers/.gitkeep
 !Material Shortage Registers/README.md
 
-# Generated Vendor Registers and vendor-facing Excel files
+# Generated Vendor Registers and vendor-facing Excel workbooks
+# These may contain operational supplier information.
 Vendor Registers/*
 !Vendor Registers/.gitkeep
 !Vendor Registers/README.md
 
-# Excel/Office temporary lock files
+# Microsoft Excel temporary/lock files
 ~$*.xls*
-~$*.xlsx
-~$*.xlsm
-~$*.xlsb
-
-# Optional local packaging/build outputs
-build/
-dist/
-release/
-*.spec
