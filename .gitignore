@@ -142,5 +142,23 @@ Vendor Registers/**/*.XLSX
 Vendor Registers/**/*.XLSM
 Vendor Registers/**/*.XLSB
 
+# Vendor Date Registers (incoming vendor response workbooks)
+Vendor Date Registers/*.xls
+Vendor Date Registers/*.xlsx
+Vendor Date Registers/*.xlsm
+Vendor Date Registers/*.xlsb
+Vendor Date Registers/*.XLS
+Vendor Date Registers/*.XLSX
+Vendor Date Registers/*.XLSM
+Vendor Date Registers/*.XLSB
+Vendor Date Registers/**/*.xls
+Vendor Date Registers/**/*.xlsx
+Vendor Date Registers/**/*.xlsm
+Vendor Date Registers/**/*.xlsb
+Vendor Date Registers/**/*.XLS
+Vendor Date Registers/**/*.XLSX
+Vendor Date Registers/**/*.XLSM
+Vendor Date Registers/**/*.XLSB
+
 # Microsoft Excel temporary/lock files
 ~$*.xls*

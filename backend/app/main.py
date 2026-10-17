@@ -232,13 +232,20 @@ def process_reports():
 
 
 @app.get("/api/filters")
-def filters():
+def filters(project_id: str | None = None):
     try:
         with connect_services() as conn:
             # IMPORTANT:
             # get_output_table() already returns a quoted SQL identifier.
             # Do not pass its result to quote_identifier() again.
             table = get_output_table(conn)
+
+            # Optional project filter
+            pid_where = ""
+            pid_values: list[str] = []
+            if project_id and project_id != "All":
+                pid_where = ' WHERE "project_id" = ?'
+                pid_values = [project_id]
 
             result = {}
 
@@ -251,14 +258,22 @@ def filters():
             ):
                 db_col = quote_identifier(API_TO_DB[api_col])
 
-                query = f"""
-                    SELECT DISTINCT {db_col}
-                    FROM {table}
-                    WHERE TRIM(COALESCE({db_col}, '')) <> ''
-                    ORDER BY {db_col}
-                """
+                if pid_where:
+                    query = f"""
+                        SELECT DISTINCT {db_col}
+                        FROM {table}{pid_where}
+                          AND TRIM(COALESCE({db_col}, '')) <> ''
+                        ORDER BY {db_col}
+                    """
+                else:
+                    query = f"""
+                        SELECT DISTINCT {db_col}
+                        FROM {table}
+                        WHERE TRIM(COALESCE({db_col}, '')) <> ''
+                        ORDER BY {db_col}
+                    """
 
-                rows = conn.execute(query).fetchall()
+                rows = conn.execute(query, pid_values).fetchall()
 
                 result[api_col] = [
                     str(row[0])
@@ -281,6 +296,7 @@ def get_shortages(
     wbs_element: str | None = None,
     material_code: str | None = None,
     scope: str | None = None,
+    project_id: str | None = None,
     page: int = 1,
     page_size: int = 10,
     sort_by: str = "material_code",
@@ -299,6 +315,11 @@ def get_shortages(
 
     conditions = []
     values = []
+
+    # Project filter
+    if project_id and project_id != "All":
+        conditions.append('"project_id" = ?')
+        values.append(project_id)
 
     # Apply the four supported filters.
     for field, value in (
@@ -396,11 +417,16 @@ def export_shortages(
     wbs_element: str | None = None,
     material_code: str | None = None,
     scope: str | None = None,
+    project_id: str | None = None,
     format: str = "xlsx",
 ):
     """Export filtered net_shortage rows as XLSX or CSV."""
     conditions = []
     values = []
+
+    if project_id and project_id != "All":
+        conditions.append('"project_id" = ?')
+        values.append(project_id)
 
     for field, value in (
         ("material_ref_code", material_ref_code),
@@ -439,6 +465,7 @@ def export_shortages(
         "Material Description", "ZPP7 Quantity", "Project Stock Quantity",
         "PO Quantity", "Open PO Quantity", "PR Quantity",
         "Net Shortage", "Free Stock", "Vendor Detail", "Remarks", "Scope",
+        "Final Date",
     ]
 
     fmt = format.lower().strip()
@@ -499,7 +526,7 @@ def export_shortages(
     # Freeze header row, set reasonable column widths.
     ws.freeze_panes = "A2"
     col_widths = [
-        22, 22, 22, 40, 12, 16, 12, 14, 12, 14, 12, 30, 35, 14
+        22, 22, 22, 40, 12, 16, 12, 14, 12, 14, 12, 30, 35, 14, 16
     ]
     for i, width in enumerate(col_widths, start=1):
         ws.column_dimensions[

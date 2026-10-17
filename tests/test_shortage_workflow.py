@@ -401,6 +401,149 @@ class TestME2MReportDiscovery(unittest.TestCase):
 
         matches = _classify_files(folder, PROJECT_REPORT_CLASSIFIERS)
         self.assertIsNone(matches.get("me2m"))
+class TestProjectAwarePersistence(unittest.TestCase):
+    """Phase 1: project-aware write_output preserves Final Dates and isolates projects."""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.test_dir) / "test_services.db"
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_write_output_tags_project_id(self):
+        """write_output sets project_id on all inserted rows."""
+        from services.shortage_service import write_output
+        rows = [
+            ("MAT001", "Relay", 10.0, 2.0, 5.0, 2.0, 1.0, 5.0, 1.0, "VENDOR_A", "", "REF01", "WBS01", "ELEC"),
+        ]
+        write_output(rows, project_id="PROJ-TEST", db_path=self.db_path)
+
+        conn = sqlite3.connect(self.db_path)
+        result = conn.execute('SELECT "project_id" FROM net_shortage').fetchall()
+        conn.close()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], "PROJ-TEST")
+
+    def test_write_output_preserves_final_dates(self):
+        """Reprocessing preserves existing Final Dates for matching records."""
+        from services.shortage_service import write_output
+        rows = [
+            ("MAT001", "Relay", 10.0, 2.0, 5.0, 2.0, 1.0, 5.0, 1.0, "VENDOR_A", "", "REF01", "WBS01", "ELEC"),
+        ]
+        write_output(rows, project_id="PROJ-A", db_path=self.db_path)
+
+        # Set a Final Date manually
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('UPDATE net_shortage SET "Final Date" = "2026-12-01" WHERE "Material Code" = "MAT001"')
+        conn.commit()
+        conn.close()
+
+        # Reprocess same project
+        write_output(rows, project_id="PROJ-A", db_path=self.db_path)
+
+        conn = sqlite3.connect(self.db_path)
+        result = conn.execute('SELECT "Final Date" FROM net_shortage WHERE "Material Code" = "MAT001"').fetchone()
+        conn.close()
+        self.assertEqual(result[0], "2026-12-01")
+
+    def test_write_output_isolates_projects(self):
+        """Reprocessing project A does not affect project B's rows."""
+        from services.shortage_service import write_output
+        rows_a = [
+            ("MAT001", "Relay", 10.0, 2.0, 5.0, 2.0, 1.0, 5.0, 1.0, "VENDOR_A", "", "REF01", "WBS01", "ELEC"),
+        ]
+        rows_b = [
+            ("MAT002", "Contactor", 20.0, 3.0, 8.0, 4.0, 2.0, 10.0, 2.0, "VENDOR_B", "", "REF02", "WBS02", "MECH"),
+        ]
+        write_output(rows_a, project_id="PROJ-A", db_path=self.db_path)
+        write_output(rows_b, project_id="PROJ-B", db_path=self.db_path)
+
+        # Reprocess PROJ-A with modified data
+        rows_a_v2 = [
+            ("MAT001", "Relay V2", 15.0, 2.0, 5.0, 2.0, 1.0, 8.0, 1.0, "VENDOR_A", "", "REF01", "WBS01", "ELEC"),
+        ]
+        write_output(rows_a_v2, project_id="PROJ-A", db_path=self.db_path)
+
+        conn = sqlite3.connect(self.db_path)
+        all_rows = conn.execute('SELECT "project_id", "Material Code", "Material Description" FROM net_shortage ORDER BY "project_id"').fetchall()
+        conn.close()
+
+        self.assertEqual(len(all_rows), 2)
+        self.assertEqual(all_rows[0][0], "PROJ-A")
+        self.assertEqual(all_rows[0][2], "Relay V2")  # Updated
+        self.assertEqual(all_rows[1][0], "PROJ-B")
+        self.assertEqual(all_rows[1][1], "MAT002")  # Untouched
+
+
+class TestNestedRegisterExport(unittest.TestCase):
+    """Phase 1: register export uses nested folder path."""
+
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.test_dir) / "test_services.db"
+        # Create a test db with net_shortage
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE net_shortage (
+                "project_id" TEXT,
+                "Material Ref Code" TEXT, "WBS Element" TEXT,
+                "Material Code" TEXT, "Material Description" TEXT,
+                "ZPP7 Quantity" REAL, "Project Stock Quantity" REAL,
+                "PO Quantity" REAL, "Open PO Quantity" REAL,
+                "PR Quantity" REAL, "Net Shortage" REAL, "Free Stock" REAL,
+                "Vendor Detail" TEXT, "Remarks" TEXT, "Scope" TEXT, "Final Date" TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO net_shortage VALUES (
+                'PROJ-TEST', 'REF01', 'WBS01', 'MAT001', 'Relay',
+                10.0, 2.0, 5.0, 2.0, 1.0, 5.0, 1.0,
+                'VENDOR_A', '', 'ELECTRICAL', '2026-12-01'
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_export_creates_nested_path(self):
+        """Register export creates <project_id>/<project_id>_Net_shortage_Table.xlsx."""
+        from services.shortage_export import export_material_shortage_register
+        output_dir = Path(self.test_dir) / "registers"
+        result = export_material_shortage_register(
+            "PROJ-TEST", db_path=self.db_path, output_dir=output_dir
+        )
+        expected_file = output_dir / "PROJ-TEST" / "PROJ-TEST_Net_shortage_Table.xlsx"
+        self.assertTrue(expected_file.exists())
+        self.assertEqual(result["filename"], "PROJ-TEST_Net_shortage_Table.xlsx")
+        self.assertEqual(result["rows"], 1)
+
+    def test_export_includes_final_date_column(self):
+        """Exported register workbook includes Final Date header."""
+        from services.shortage_export import export_material_shortage_register
+        output_dir = Path(self.test_dir) / "registers"
+        result = export_material_shortage_register(
+            "PROJ-TEST", db_path=self.db_path, output_dir=output_dir
+        )
+        wb = openpyxl.load_workbook(result["path"])
+        headers = [cell.value for cell in wb.active[1]]
+        self.assertIn("Final Date", headers)
+        wb.close()
+
+
+class TestFinalDateInColumns(unittest.TestCase):
+    """Phase 1: Final Date appears in DB_COLUMNS and API_COLUMNS."""
+
+    def test_final_date_in_db_columns(self):
+        self.assertIn("Final Date", DB_COLUMNS)
+
+    def test_final_date_in_api_columns(self):
+        self.assertIn("final_date", API_COLUMNS)
+
+    def test_columns_same_length(self):
+        self.assertEqual(len(DB_COLUMNS), len(API_COLUMNS))
 
 
 if __name__ == "__main__":

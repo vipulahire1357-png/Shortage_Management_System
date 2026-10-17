@@ -2,7 +2,7 @@
 Export Material Shortage Register workbooks for individual projects.
 
 Generates one Excel workbook per project saved under:
-    Material Shortage Registers/<project_id>.xlsx
+    Material Shortage Registers/<project_id>/<project_id>_Net_shortage_Table.xlsx
 
 Features:
 - Preserves numeric values as numbers and Material Codes as text.
@@ -48,6 +48,7 @@ SHORTAGE_REGISTER_HEADERS = [
     "Vendor Detail",
     "Remarks",
     "Scope",
+    "Final Date",
 ]
 
 NUMERIC_COLUMNS = {
@@ -81,6 +82,7 @@ COLUMN_WIDTHS = [
     30,  # Vendor Detail
     35,  # Remarks
     14,  # Scope
+    16,  # Final Date
 ]
 
 
@@ -164,17 +166,19 @@ def export_material_shortage_register(
 ) -> dict[str, Any]:
     """
     Export the current project's Material Shortage Register to Excel.
-    Saves to: <output_dir>/<project_id>.xlsx
+    Saves to: <output_dir>/<project_id>/<project_id>_Net_shortage_Table.xlsx
     """
     clean_id = project_id.strip()
-    if not clean_id or not re.match(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,63}$", clean_id):
+    if not clean_id or not re.match(r"^[A-Za-z0-9][A-Za-z0-9\-\.]{0,63}$", clean_id):
         raise ValueError(f"Invalid project ID {project_id!r}")
 
     if not db_path.is_file():
         raise FileNotFoundError(f"Services database not found: {db_path}")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    out_file = output_dir / f"{clean_id}.xlsx"
+    # Nested folder: Material Shortage Registers/<project_id>/
+    project_dir = output_dir / clean_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+    out_file = project_dir / f"{clean_id}_Net_shortage_Table.xlsx"
 
     with sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True) as conn:
         conn.row_factory = sqlite3.Row
@@ -186,9 +190,24 @@ def export_material_shortage_register(
         if not table_name:
             raise RuntimeError("net_shortage table not found. Run shortage processing first.")
 
-        # Read all rows in standard display order
-        query = f'SELECT * FROM "{table_name}" ORDER BY "Material Code", "WBS Element"'
-        rows = conn.execute(query).fetchall()
+        # Read only this project's rows, ordered for the register
+        query = (
+            f'SELECT * FROM "{table_name}" '
+            f'WHERE "project_id" = ? '
+            f'ORDER BY "Material Code", "WBS Element"'
+        )
+        rows = conn.execute(query, (clean_id,)).fetchall()
+
+    if not rows:
+        # Fallback: try loading all rows (backward compat for untagged data)
+        with sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            tables = {r[0].casefold(): r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            table_name = tables.get("net_shortage")
+            query = f'SELECT * FROM "{table_name}" ORDER BY "Material Code", "WBS Element"'
+            rows = conn.execute(query).fetchall()
 
     wb = build_material_shortage_workbook(rows, table_name_suffix=clean_id)
     wb.save(out_file)

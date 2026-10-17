@@ -260,6 +260,7 @@ type Row = {
   material_description: string; zpp7_quantity: number; project_stock_quantity: number;
   po_quantity: number; open_po_quantity: number; pr_quantity: number;
   net_shortage: number; free_stock: number; vendor_detail: string; remarks: string; scope: string;
+  final_date: string;
 };
 type Filters = { material_ref_code: string[]; wbs_element: string[]; material_code: string[]; scope: string[] };
 type Payload = {
@@ -331,6 +332,7 @@ const columns: { key: keyof Row; label: string; numeric?: boolean }[] = [
   { key: "free_stock", label: "Free Stock", numeric: true },
   { key: "vendor_detail", label: "Vendor Detail" },
   { key: "remarks", label: "Remarks" },
+  { key: "final_date", label: "Final Date" },
 ];
 const fmt = (v: number | string | undefined) => {
   const n = Number(v ?? 0);
@@ -1186,7 +1188,7 @@ function VendorTrackPage() {
    Root App component
 ═══════════════════════════════════════════════════════════ */
 export default function App() {
-  const [page, setPage] = useState<"shortage" | "input" | "vendortrack">("shortage");
+  const [page, setPage] = useState<"shortage" | "input" | "vendortrack">("input");
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   /* Shortage page state */
@@ -1318,13 +1320,13 @@ export default function App() {
 
         {sidebarOpen && <>
           <div className="sidebar-caption">WORKSPACE</div>
-          <button className={`nav-item ${page === "shortage" ? "active" : ""}`}
-            onClick={() => setPage("shortage")}>
-            <LayoutDashboard size={18} /> Material Shortage Register
-          </button>
           <button className={`nav-item ${page === "input" ? "active" : ""}`}
             onClick={() => setPage("input")}>
             <FileSpreadsheet size={18} /> Input &amp; Imports
+          </button>
+          <button className={`nav-item ${page === "shortage" ? "active" : ""}`}
+            onClick={() => setPage("shortage")}>
+            <LayoutDashboard size={18} /> Material Shortage Register
           </button>
           <button className={`nav-item ${page === "vendortrack" ? "active" : ""}`}
             onClick={() => setPage("vendortrack")}>
@@ -1377,13 +1379,13 @@ export default function App() {
 
         {!sidebarOpen && (
           <div className="sidebar-icons-collapsed">
-            <button className={`nav-icon${page === "shortage" ? " active" : ""}`}
-              onClick={() => setPage("shortage")} title="Material Shortage Register">
-              <LayoutDashboard size={20} />
-            </button>
             <button className={`nav-icon${page === "input" ? " active" : ""}`}
               onClick={() => setPage("input")} title="Input &amp; Imports">
               <FileSpreadsheet size={20} />
+            </button>
+            <button className={`nav-icon${page === "shortage" ? " active" : ""}`}
+              onClick={() => setPage("shortage")} title="Material Shortage Register">
+              <LayoutDashboard size={20} />
             </button>
             <button className={`nav-icon${page === "vendortrack" ? " active" : ""}`}
               onClick={() => setPage("vendortrack")} title="Vendor Track">

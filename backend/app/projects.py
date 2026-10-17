@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException
 
 from .database import GLOBAL_DIR, PROJECTS_DIR, RAW_DIR, REPORTS, ROOT, SHORTAGE_REGISTERS_DIR
 from services.shortage_export import export_material_shortage_register
+from services.lock import processing_lock
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -298,16 +299,22 @@ def process_project(project_id: str):
         staged.append(dest.name)
 
     # ── Run existing pipeline ─────────────────────────────────────────────────
-    command = [sys.executable, "main.py", "--report", "all"]
+    command = [sys.executable, "main.py", "--report", "all", "--project-id", project_id]
 
     try:
-        result = subprocess.run(
-            command,
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+        with processing_lock(project_id):
+            result = subprocess.run(
+                command,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+    except RuntimeError as lock_err:
+        raise HTTPException(
+            status_code=409,
+            detail=str(lock_err),
+        ) from lock_err
     except subprocess.TimeoutExpired as exc:
         raise HTTPException(
             status_code=504,
@@ -374,7 +381,10 @@ def get_project_register_info(project_id: str):
             status_code=400,
             detail=f"Invalid project ID {project_id!r}.",
         )
-    target = SHORTAGE_REGISTERS_DIR / f"{project_id}.xlsx"
+    # Check nested path first, then flat path for backward compatibility
+    nested_target = SHORTAGE_REGISTERS_DIR / project_id / f"{project_id}_Net_shortage_Table.xlsx"
+    flat_target = SHORTAGE_REGISTERS_DIR / f"{project_id}.xlsx"
+    target = nested_target if nested_target.is_file() else flat_target
     exists = target.is_file()
     return {
         "project_id": project_id,

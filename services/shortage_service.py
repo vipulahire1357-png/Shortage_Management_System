@@ -52,6 +52,25 @@ OUTPUT_COLUMNS = [
     "Material Ref Code",
     "WBS Element",
     "Scope",
+    "Final Date",
+]
+
+# Columns written during build_rows (excludes project_id which is added at write time)
+BUILD_COLUMNS = [
+    "Material Code",
+    "Material Description",
+    "ZPP7 Quantity",
+    "Project Stock Quantity",
+    "PO Quantity",
+    "Open PO Quantity",
+    "PR Quantity",
+    "Net Shortage",
+    "Free Stock",
+    "Vendor Detail",
+    "Remarks",
+    "Material Ref Code",
+    "WBS Element",
+    "Scope",
 ]
 
 
@@ -324,6 +343,26 @@ def build_rows(
                 bom_totals[key]["description"] = row["Material Description"]
             bom_totals[key]["req"] += row["Req Quantity"]
 
+    # ── One-vendor-per-row enforcement (§3.1) ──────────────────────────────
+    # Validate that each material maps to at most one vendor.
+    # If a material has multiple distinct vendors in ME2M, report a
+    # data-quality error listing the affected materials and vendors.
+    multi_vendor_conflicts: list[str] = []
+    for mat_code, vendors_set in sorted(vendor_details.items()):
+        if len(vendors_set) > 1:
+            multi_vendor_conflicts.append(
+                f"  Material {mat_code!r}: {sorted(vendors_set)}"
+            )
+
+    if multi_vendor_conflicts:
+        raise ValueError(
+            f"One-vendor-per-row violation: {len(multi_vendor_conflicts)} material(s) "
+            f"have multiple conflicting vendors in ME2M data.\n"
+            + "\n".join(multi_vendor_conflicts[:20])
+            + (f"\n  ... and {len(multi_vendor_conflicts) - 20} more"
+               if len(multi_vendor_conflicts) > 20 else "")
+        )
+
     output: list[tuple[Any, ...]] = []
     for (ref_code, wbs, material), bom in sorted(bom_totals.items()):
         unrestricted = storage_totals.get((wbs, material), 0.0)
@@ -331,7 +370,9 @@ def build_rows(
         pr_qty = pr_totals.get((wbs, material), 0.0)
         net_shortage = max(bom["req"] - unrestricted, 0.0)
         free_stock = free_stock_totals.get(material, 0.0)
-        vendor_detail = " | ".join(sorted(vendor_details.get(material, set())))
+        # Single vendor per material (validated above)
+        material_vendors = vendor_details.get(material, set())
+        vendor_detail = next(iter(material_vendors)) if material_vendors else None
         remarks = ""
         scope = material_scope.get(material, "")
 
@@ -345,7 +386,7 @@ def build_rows(
             pr_qty,
             net_shortage,
             free_stock,
-            vendor_detail or None,
+            vendor_detail,
             remarks,
             ref_code,
             wbs,
@@ -361,74 +402,137 @@ def build_rows(
     return output
 
 
+def _ensure_net_shortage_schema(conn: sqlite3.Connection) -> None:
+    """Create or migrate the net_shortage table to include project_id and Final Date."""
+    tables = list_tables(conn)
+    if OUTPUT_TABLE.casefold() not in tables:
+        expected_types = {
+            "project_id": "TEXT",
+            "Material Code": "TEXT",
+            "Material Description": "TEXT",
+            "ZPP7 Quantity": "REAL",
+            "Project Stock Quantity": "REAL",
+            "PO Quantity": "REAL",
+            "Open PO Quantity": "REAL",
+            "PR Quantity": "REAL",
+            "Net Shortage": "REAL",
+            "Free Stock": "REAL",
+            "Vendor Detail": "TEXT",
+            "Remarks": "TEXT",
+            "Material Ref Code": "TEXT",
+            "WBS Element": "TEXT",
+            "Scope": "TEXT",
+            "Final Date": "TEXT",
+        }
+        definitions = ", ".join(
+            f"{quote_identifier(col)} {kind}"
+            for col, kind in expected_types.items()
+        )
+        conn.execute(
+            f"CREATE TABLE {quote_identifier(OUTPUT_TABLE)} ({definitions})"
+        )
+        return
+
+    # Table exists — ensure required columns are present
+    actual = table_columns(conn, tables[OUTPUT_TABLE.casefold()])
+    for col in ("project_id", "Final Date"):
+        if col.casefold() not in actual:
+            conn.execute(
+                f'ALTER TABLE {quote_identifier(OUTPUT_TABLE)} '
+                f'ADD COLUMN {quote_identifier(col)} TEXT'
+            )
+
+
 def write_output(
     rows: list[tuple[Any, ...]],
+    project_id: str,
     db_path: Path = SERVICES_DB_PATH,
 ) -> None:
-    """Atomically refresh net_shortage, preserving unrelated tables."""
+    """
+    Project-aware refresh of net_shortage.
+
+    - Deletes only THIS project's rows, leaving other projects intact.
+    - Preserves existing Final Dates for matching records
+      (matched by Material Ref Code + WBS Element + Material Code).
+    - Adds project_id to every inserted row.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    expected_types = {
-        "Material Code": "TEXT",
-        "Material Description": "TEXT",
-        "ZPP7 Quantity": "REAL",
-        "Project Stock Quantity": "REAL",
-        "PO Quantity": "REAL",
-        "Open PO Quantity": "REAL",
-        "PR Quantity": "REAL",
-        "Net Shortage": "REAL",
-        "Free Stock": "REAL",
-        "Vendor Detail": "TEXT",
-        "Remarks": "TEXT",
-        "Material Ref Code": "TEXT",
-        "WBS Element": "TEXT",
-        "Scope": "TEXT",
-    }
-    definitions = ", ".join(
-        f"{quote_identifier(column)} {kind}"
-        for column, kind in expected_types.items()
-    )
-    quoted_columns = ", ".join(quote_identifier(column) for column in OUTPUT_COLUMNS)
-    placeholders = ", ".join("?" for _ in OUTPUT_COLUMNS)
+    # BUILD_COLUMNS matches the tuple structure from build_rows()
+    all_columns = ["project_id"] + list(BUILD_COLUMNS) + ["Final Date"]
+    quoted_columns = ", ".join(quote_identifier(c) for c in all_columns)
+    placeholders = ", ".join("?" for _ in all_columns)
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA busy_timeout = 5000")
         with conn:
+            _ensure_net_shortage_schema(conn)
+
+            # ── Read existing Final Dates for this project ─────────────
+            existing_dates: dict[tuple[str, str, str], str] = {}
+            try:
+                cur = conn.execute(
+                    f'SELECT "Material Ref Code", "WBS Element", "Material Code", '
+                    f'"Final Date" FROM {quote_identifier(OUTPUT_TABLE)} '
+                    f'WHERE "project_id" = ?',
+                    (project_id,),
+                )
+                for row in cur.fetchall():
+                    ref = clean_text(row[0])
+                    wbs = clean_text(row[1])
+                    mat = clean_text(row[2])
+                    fdate = clean_text(row[3])
+                    if fdate:
+                        existing_dates[(ref, wbs, mat)] = fdate
+            except Exception:
+                pass  # Table may not have data yet
+
+            # ── Delete only this project's rows ────────────────────────
             conn.execute(
-                f"DROP TABLE IF EXISTS {quote_identifier('_netshortage_table_new')}"
-            )
-            conn.execute(
-                f"CREATE TABLE {quote_identifier('_netshortage_table_new')} ({definitions})"
-            )
-            conn.executemany(
-                f"INSERT INTO {quote_identifier('_netshortage_table_new')} "
-                f"({quoted_columns}) VALUES ({placeholders})",
-                rows,
-            )
-            tables = list_tables(conn)
-            old_table = tables.get(OUTPUT_TABLE.casefold())
-            if old_table is not None:
-                conn.execute(f"DROP TABLE {quote_identifier(old_table)}")
-            conn.execute(
-                f"ALTER TABLE {quote_identifier('_netshortage_table_new')} "
-                f"RENAME TO {quote_identifier(OUTPUT_TABLE)}"
+                f'DELETE FROM {quote_identifier(OUTPUT_TABLE)} '
+                f'WHERE "project_id" = ?',
+                (project_id,),
             )
 
+            # ── Insert new rows with preserved Final Dates ─────────────
+            insert_rows: list[tuple[Any, ...]] = []
+            for row in rows:
+                # row is (material, desc, zpp7_qty, ..., ref_code, wbs, scope)
+                # indices: 0=mat, 11=ref_code, 12=wbs
+                ref_code = clean_text(row[11])
+                wbs = clean_text(row[12])
+                material = clean_text(row[0])
+                final_date = existing_dates.get(
+                    (ref_code, wbs, material), ""
+                )
+                insert_rows.append(
+                    (project_id,) + tuple(row) + (final_date,)
+                )
 
-def main() -> int:
-    """Build and refresh the net-shortage table."""
+            if insert_rows:
+                conn.executemany(
+                    f'INSERT INTO {quote_identifier(OUTPUT_TABLE)} '
+                    f'({quoted_columns}) VALUES ({placeholders})',
+                    insert_rows,
+                )
+
+
+def main(project_id: str = "") -> int:
+    """Build and refresh the net-shortage table for a specific project."""
     try:
         print("Building ABB net_shortage table...")
         print(f"Global database: {GLOBAL_DB_PATH}")
         print(f"ZPP7 database:   {ZPP7_DB_PATH}")
         print(f"Output database: {SERVICES_DB_PATH}")
+        if project_id:
+            print(f"Project ID:      {project_id}")
 
         rows = build_rows(GLOBAL_DB_PATH, ZPP7_DB_PATH)
-        write_output(rows, SERVICES_DB_PATH)
+        write_output(rows, project_id=project_id, db_path=SERVICES_DB_PATH)
 
-        print(f"\\nRows written: {len(rows)}")
+        print(f"\nRows written: {len(rows)}")
         print(f"Output table: {OUTPUT_TABLE}")
-        print("\\nPreview:")
+        print("\nPreview:")
         with sqlite3.connect(SERVICES_DB_PATH) as conn:
             preview = conn.execute(
                 f"SELECT * FROM {quote_identifier(OUTPUT_TABLE)} LIMIT 10"

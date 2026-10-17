@@ -66,14 +66,37 @@ def list_vt_projects():
     SHORTAGE_REGISTERS_DIR.mkdir(parents=True, exist_ok=True)
     projects: list[str] = []
     files: list[dict[str, str]] = []
+    seen: set[str] = set()
 
+    # Strategy 1: Nested directories — Material Shortage Registers/<project_id>/<project_id>_*.xlsx
+    for entry in sorted(SHORTAGE_REGISTERS_DIR.iterdir()):
+        if entry.is_dir() and _valid_project_id(entry.name):
+            for xls in sorted(entry.iterdir()):
+                if (
+                    xls.is_file()
+                    and xls.suffix.lower() in (".xlsx", ".xls", ".xlsm")
+                    and not xls.name.startswith("~$")
+                ):
+                    pid = entry.name
+                    if pid not in seen:
+                        seen.add(pid)
+                        projects.append(pid)
+                        files.append({
+                            "project_id": pid,
+                            "filename": xls.name,
+                        })
+                    break  # One register per project folder
+
+    # Strategy 2: Flat files — Material Shortage Registers/<project_id>.xlsx (backward compat)
     for entry in sorted(SHORTAGE_REGISTERS_DIR.iterdir()):
         if (
             entry.is_file()
             and entry.suffix.lower() in (".xlsx", ".xls", ".xlsm")
             and not entry.name.startswith("~$")
             and _valid_project_id(entry.stem)
+            and entry.stem not in seen
         ):
+            seen.add(entry.stem)
             projects.append(entry.stem)
             files.append({
                 "project_id": entry.stem,

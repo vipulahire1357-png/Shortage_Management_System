@@ -12,6 +12,8 @@ def main() -> int:
                         help="Run a specific report parser or all parsers (default: all)")
     parser.add_argument("--skip-shortage", action="store_true",
                         help="Run parsers only; skip shortage table generation")
+    parser.add_argument("--project-id", default="",
+                        help="Project ID to tag shortage records with (e.g. IN-10026019)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
@@ -40,7 +42,7 @@ def main() -> int:
         return 0
     try:
         logger.info("Starting ABB net-shortage table generation")
-        result = run_shortage_service()
+        result = run_shortage_service(project_id=args.project_id)
         if isinstance(result, int) and not isinstance(result, bool) and result != 0:
             raise RuntimeError(f"Shortage service returned failure code {result}")
         logger.info("Shortage table generated successfully.")

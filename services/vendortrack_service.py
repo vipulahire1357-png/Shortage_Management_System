@@ -260,19 +260,41 @@ def refresh_vendor_track_from_registers(
     project_files: list[tuple[str, Path]] = []
     for pid in project_ids:
         clean_id = pid.strip()
-        if not clean_id or not re.match(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,63}$", clean_id):
-            raise ValueError(f"Invalid project ID {pid!r}. Use only alphanumerics and hyphens.")
+        if not clean_id or not re.match(r"^[A-Za-z0-9][A-Za-z0-9\-\.]{0,63}$", clean_id):
+            raise ValueError(f"Invalid project ID {pid!r}. Use only alphanumerics, hyphens, and dots.")
 
-        reg_file = registers_dir / f"{clean_id}.xlsx"
+        # Strategy 1: Nested path — <registers_dir>/<project_id>/<project_id>_Net_shortage_Table.xlsx
+        nested_file = registers_dir / clean_id / f"{clean_id}_Net_shortage_Table.xlsx"
+        # Strategy 2: Flat path — <registers_dir>/<project_id>.xlsx
+        flat_file = registers_dir / f"{clean_id}.xlsx"
+
+        if nested_file.is_file():
+            reg_file = nested_file
+        elif flat_file.is_file():
+            reg_file = flat_file
+        else:
+            # Try to find any xlsx in the nested folder
+            nested_dir = registers_dir / clean_id
+            reg_file = None
+            if nested_dir.is_dir():
+                for candidate in sorted(nested_dir.iterdir()):
+                    if (
+                        candidate.is_file()
+                        and candidate.suffix.lower() in (".xlsx", ".xls", ".xlsm")
+                        and not candidate.name.startswith("~$")
+                    ):
+                        reg_file = candidate
+                        break
+            if reg_file is None:
+                raise FileNotFoundError(
+                    f"Material Shortage Register file not found for project '{clean_id}': "
+                    f"Expected '{nested_file.name}' in {registers_dir.name}/{clean_id}/ "
+                    f"or '{flat_file.name}' in {registers_dir.name}/"
+                )
+
         # Prevent path traversal
         if not str(reg_file.resolve()).startswith(str(registers_dir.resolve())):
             raise ValueError(f"Invalid register file path for project '{clean_id}'.")
-
-        if not reg_file.is_file():
-            raise FileNotFoundError(
-                f"Material Shortage Register file not found for project '{clean_id}': "
-                f"Expected '{reg_file.name}' in {registers_dir.name}/"
-            )
 
         # Validate columns
         validate_material_shortage_register(reg_file)
