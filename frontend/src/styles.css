@@ -608,3 +608,35 @@
 .badge-miss { background: #fef3e0; color: #9a6b1e; }
 .file-name { font-size: 12px; font-weight: 600; color: #33363d; }
 .file-label { font-size: 10px; color: #93959c; margin-top: 2px; }
+
+/* Microsoft Excel theme green for the workbook action */
+.excel-button { background: #fff; border-color: #217346; color: #217346; }
+.excel-button:hover:not(:disabled) { background: #f0f7f2; border-color: #185c37; color: #185c37; }
+.excel-button:disabled { opacity: .5; cursor: not-allowed; }
+.success-button { background: #217346; border-color: #217346; color: #fff; }
+.success-button:hover:not(:disabled) { background: #185c37; border-color: #185c37; }
+.success-button:disabled { opacity: .55; cursor: not-allowed; }
+.brand { gap: 8px; }
+.abb-logo-image { width: 54px; height: auto; display: block; flex: 0 0 auto; }
+.brand-title { flex: 1; min-width: 0; font-size: 12px; line-height: 1.25; }
+.section-toggle { width: 100%; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.section-toggle:hover, .vt-section-toggle:hover { color: #b5121b; }
+.section-chevron { margin-left: auto; flex: 0 0 auto; transform: rotate(-90deg); transition: transform .16s ease; }
+.section-chevron.open { transform: rotate(0deg); }
+.shortage-workspace-sidebar > .workspace-projects-section { display: flex; flex: 1; flex-direction: column; min-height: 120px; }
+.workspace-project-list { flex: 1; max-height: none; min-height: 80px; }
+.workspace-project-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.workspace-project-row .workspace-project-item { flex: 1; min-width: 0; }
+.workspace-project-delete { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; height: 32px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #898a90; }
+.workspace-project-delete:hover:not(:disabled) { background: #fff0f0; border-color: #f1c2c5; color: #b5121b; }
+.workspace-project-delete:disabled { opacity: .55; cursor: wait; }
+.vt-sidebar > .vt-sidebar-section:first-of-type { display: flex; flex: 1; flex-direction: column; min-height: 120px; }
+.vt-project-list { flex: 1; max-height: none; min-height: 80px; }
+.submitted-final-date-list { flex: 0 1 auto; min-height: 0; max-height: 180px; overflow: auto; }
+.submitted-final-date-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.submitted-final-date-item { flex: 1; min-width: 0; }
+.vt-section-toggle { width: 100%; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.vt-filter-controls { flex-shrink: 0; }
+.dismissible-notice { min-width: 0; }
+.notification-close { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 24px; width: 24px; height: 24px; margin-left: auto; padding: 0; border: 0; border-radius: 5px; background: transparent; color: inherit; opacity: .72; }
+.notification-close:hover { background: #0000000d; opacity: 1; }

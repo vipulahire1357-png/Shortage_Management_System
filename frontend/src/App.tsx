@@ -5,13 +5,34 @@ import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, CheckCircle, ChevronDown,
   ChevronLeft, ChevronRight, FileDown, FileSpreadsheet, Filter, FolderOpen,
   LayoutDashboard, LoaderCircle, Menu, RefreshCw, Search, UploadCloud, X,
-  XCircle, Truck, CheckSquare, Square,
+  XCircle, Truck, CheckSquare, Square, Trash2,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────
    API base — relative so dev proxy + production both work.
 ───────────────────────────────────────────────────────────── */
 const API = "/api";
+
+function DismissibleNotice({
+  children, className, style,
+}: {
+  children: React.ReactNode;
+  className: string;
+  style?: React.CSSProperties;
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <div className={`${className} dismissible-notice`} style={style}
+      role={className.includes("error") ? "alert" : "status"}>
+      {children}
+      <button type="button" className="notification-close" aria-label="Close notification"
+        title="Close notification" onClick={() => setDismissed(true)}>
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
 
 /* ═══════════════════════════════════════════════════════════
    Shared UI components
@@ -547,7 +568,7 @@ function InputPage({
 
             {/* Missing files warning */}
             {status && !status.ready && (
-              <div className="alert error missing-alert">
+              <DismissibleNotice key={selectedProject} className="alert error missing-alert">
                 <AlertTriangle size={15} />
                 <div>
                   <strong>Missing required reports — cannot process</strong>
@@ -562,7 +583,7 @@ function InputPage({
                     </div>
                   )}
                 </div>
-              </div>
+              </DismissibleNotice>
             )}
 
             {/* File listing grid */}
@@ -645,19 +666,19 @@ function InputPage({
             </div>
 
             {exportRegSuccess && (
-              <div className="upload-message success-text">
+              <DismissibleNotice key={exportRegSuccess} className="upload-message success-text">
                 <CheckCircle size={14} /> {exportRegSuccess}
-              </div>
+              </DismissibleNotice>
             )}
             {processSuccess && (
-              <div className="upload-message success-text">
+              <DismissibleNotice key={processSuccess} className="upload-message success-text">
                 <CheckCircle size={14} /> {processSuccess}
-              </div>
+              </DismissibleNotice>
             )}
             {processError && (
-              <div className="upload-message error-text">
+              <DismissibleNotice key={processError} className="upload-message error-text">
                 <AlertTriangle size={14} /> {processError}
-              </div>
+              </DismissibleNotice>
             )}
             {processLog && <pre className="process-log">{processLog}</pre>}
           </>
@@ -706,12 +727,9 @@ interface PreviewResult {
   headers: string[];
   items: PreviewItem[];
 }
-interface ImportHistory {
-  id: number;
-  filename: string;
-  imported_at: string;
-  rows_updated: number;
-  affected_projects: string;
+interface SubmittedFinalDateFolder {
+  name: string;
+  file_count: number;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -724,13 +742,16 @@ function VendorImportPage() {
   const [selectedFile, setSelectedFile] = useState<ImportFile | null>(null);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [openingExcel, setOpeningExcel] = useState(false);
   const [applying, setApplying] = useState(false);
   const [exportingProposals, setExportingProposals] = useState(false);
   const [applyResult, setApplyResult] = useState<{ success: boolean; message: string } | null>(null);
   const [proposalResult, setProposalResult] = useState("");
+  const [openExcelResult, setOpenExcelResult] = useState("");
   const [error, setError] = useState("");
-  const [history, setHistory] = useState<ImportHistory[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [submittedFinalDateFolders, setSubmittedFinalDateFolders] = useState<SubmittedFinalDateFolder[]>([]);
+  const [loadingSubmittedFolders, setLoadingSubmittedFolders] = useState(false);
+  const [deletingSubmittedFolder, setDeletingSubmittedFolder] = useState("");
   const [showConfirm, setShowConfirm] = useState(false);
 
   const loadFiles = useCallback(async () => {
@@ -748,19 +769,19 @@ function VendorImportPage() {
     }
   }, []);
 
-  const loadHistory = useCallback(async () => {
-    setLoadingHistory(true);
+  const loadSubmittedFinalDateFolders = useCallback(async () => {
+    setLoadingSubmittedFolders(true);
     try {
-      const res = await fetch(`${API}/vendor-track/import/history`);
+      const res = await fetch(`${API}/vendor-track/import/submitted-final-date`);
       if (res.ok) {
         const data = await res.json();
-        setHistory(data.history ?? []);
+        setSubmittedFinalDateFolders(data.folders ?? []);
       }
     } catch { /* non-blocking */ }
-    finally { setLoadingHistory(false); }
+    finally { setLoadingSubmittedFolders(false); }
   }, []);
 
-  useEffect(() => { loadFiles(); loadHistory(); }, [loadFiles, loadHistory]);
+  useEffect(() => { loadFiles(); loadSubmittedFinalDateFolders(); }, [loadFiles, loadSubmittedFinalDateFolders]);
 
   const handlePreview = async (file: ImportFile) => {
     setSelectedFile(file);
@@ -768,6 +789,7 @@ function VendorImportPage() {
     setPreview(null);
     setApplyResult(null);
     setProposalResult("");
+    setOpenExcelResult("");
     setError("");
     try {
       const res = await fetch(`${API}/vendor-track/import/preview`, {
@@ -786,8 +808,46 @@ function VendorImportPage() {
   };
 
   const refreshFilesAndPreview = async () => {
-    await loadFiles();
+    await Promise.all([loadFiles(), loadSubmittedFinalDateFolders()]);
     if (selectedFile) await handlePreview(selectedFile);
+  };
+
+  const deleteSubmittedFinalDateFolder = async (folder: SubmittedFinalDateFolder) => {
+    if (!window.confirm(`Delete Submitted Final Date/${folder.name} and its archived response files? Import history will remain.`)) return;
+    setDeletingSubmittedFolder(folder.name);
+    setError("");
+    try {
+      const res = await fetch(`${API}/vendor-track/import/submitted-final-date/${encodeURIComponent(folder.name)}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not delete the archived folder.");
+      setApplyResult({ success: true, message: data.message || `Deleted Submitted Final Date/${folder.name}.` });
+      await loadSubmittedFinalDateFolders();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete the archived folder.");
+    } finally {
+      setDeletingSubmittedFolder("");
+    }
+  };
+
+  const handleOpenExcel = async () => {
+    if (!selectedFile) return;
+    setOpeningExcel(true);
+    setError("");
+    setOpenExcelResult("");
+    try {
+      const res = await fetch(`${API}/vendor-track/import/open-excel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_path: selectedFile.absolute_path }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not open the workbook.");
+      setOpenExcelResult(data.message || `Opened ${selectedFile.filename}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not open the workbook.");
+    } finally {
+      setOpeningExcel(false);
+    }
   };
 
   const handleApply = async () => {
@@ -806,7 +866,11 @@ function VendorImportPage() {
       if (!res.ok) throw new Error(data.detail || "Apply failed.");
       setApplyResult(data);
       setProposalResult("");
-      loadHistory();
+      if (data.archived_path) {
+        setSelectedFile(null);
+        setPreview(null);
+      }
+      await Promise.all([loadFiles(), loadSubmittedFinalDateFolders()]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Apply failed.");
     } finally {
@@ -904,44 +968,71 @@ function VendorImportPage() {
           )}
         </div>
 
-        {/* Import history */}
-        {history.length > 0 && (
-          <div className="vt-sidebar-section vt-filters-section">
-            <div className="vt-section-head">
-              <Activity size={13} />
-              <span>IMPORT HISTORY</span>
-            </div>
-            <div className="vt-project-list" style={{ maxHeight: 200, overflow: "auto" }}>
-              {history.slice(0, 10).map(h => (
-                <div key={h.id} className="vt-project-item" style={{ cursor: "default" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="file-name" style={{ fontSize: 11 }}>{h.filename}</div>
-                    <div className="file-label">{h.imported_at} · {h.rows_updated} rows</div>
+        <div className="vt-sidebar-section">
+          <div className="vt-section-head">
+            <FolderOpen size={13} />
+            <span>SUBMITTED FINAL DATE</span>
+          </div>
+          <div className="vt-project-controls">
+            <button className="vt-ctrl-btn" onClick={loadSubmittedFinalDateFolders} title="Refresh submitted final date folders" disabled={loadingSubmittedFolders}>
+              <RefreshCw size={11} className={loadingSubmittedFolders ? "spin" : ""} />
+            </button>
+          </div>
+          {loadingSubmittedFolders && submittedFinalDateFolders.length === 0 ? (
+            <div className="vt-empty-hint"><LoaderCircle size={14} className="spin" /> Scanning…</div>
+          ) : submittedFinalDateFolders.length === 0 ? (
+            <div className="vt-empty-hint">No archived vendor folders yet. A folder appears here after a response workbook is successfully applied.</div>
+          ) : (
+            <div className="vt-project-list submitted-final-date-list">
+              {submittedFinalDateFolders.map(folder => (
+                <div key={folder.name} className="submitted-final-date-row">
+                  <div className="vt-project-item submitted-final-date-item" style={{ cursor: "default" }}>
+                    <FolderOpen size={13} style={{ color: "#8a8d95", flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="file-name" style={{ wordBreak: "break-word" }}>{folder.name}</div>
+                      <div className="file-label">{folder.file_count} workbook{folder.file_count === 1 ? "" : "s"}</div>
+                    </div>
                   </div>
+                  <button
+                    className="workspace-project-delete"
+                    onClick={() => deleteSubmittedFinalDateFolder(folder)}
+                    title={`Delete Submitted Final Date/${folder.name}`}
+                    aria-label={`Delete Submitted Final Date/${folder.name}`}
+                    disabled={Boolean(deletingSubmittedFolder)}
+                  >
+                    {deletingSubmittedFolder === folder.name ? <LoaderCircle size={14} className="spin" /> : <Trash2 size={14} />}
+                  </button>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
+
         </>}
       </div>
 
       {/* ── Main content ──────────────────────────── */}
       <div className="vt-main">
         {error && (
-          <div className="upload-message error-text" style={{ marginBottom: 16 }}>
+          <DismissibleNotice key={error} className="upload-message error-text" style={{ marginBottom: 16 }}>
             <AlertTriangle size={14} /> {error}
-          </div>
+          </DismissibleNotice>
         )}
         {applyResult && (
-          <div className={`upload-message ${applyResult.success ? "success-text" : "error-text"}`} style={{ marginBottom: 16 }}>
+          <DismissibleNotice key={`${applyResult.success}-${applyResult.message}`}
+            className={`upload-message ${applyResult.success ? "success-text" : "error-text"}`} style={{ marginBottom: 16 }}>
             {applyResult.success ? <CheckCircle size={14} /> : <AlertTriangle size={14} />} {applyResult.message}
-          </div>
+          </DismissibleNotice>
         )}
         {proposalResult && (
-          <div className="upload-message success-text" style={{ marginBottom: 16 }}>
+          <DismissibleNotice key={proposalResult} className="upload-message success-text" style={{ marginBottom: 16 }}>
             <CheckCircle size={14} /> {proposalResult}
-          </div>
+          </DismissibleNotice>
+        )}
+        {openExcelResult && (
+          <DismissibleNotice key={openExcelResult} className="upload-message success-text" style={{ marginBottom: 16 }}>
+            <CheckCircle size={14} /> {openExcelResult} Edit and save Proposed Date in Excel, close the workbook, then refresh this preview.
+          </DismissibleNotice>
         )}
 
         <section className="table-card vt-register-card">
@@ -955,16 +1046,23 @@ function VendorImportPage() {
               </p>
             </div>
             <div className="table-actions">
-              <button className="outline-button" onClick={handleExportProposals}
+              <button className="primary-button excel-button" onClick={handleOpenExcel}
+                disabled={!selectedFile || openingExcel}
+                title={!selectedFile ? "Select a vendor response workbook first" : "Open the selected response workbook in Excel"}>
+                {openingExcel
+                  ? <><LoaderCircle size={14} className="spin" /> Opening…</>
+                  : <><FileSpreadsheet size={14} /> Open Excel</>}
+              </button>
+              <button className="primary-button" onClick={handleExportProposals}
                 disabled={!selectedFile || !canExportProposals || exportingProposals}
                 title={!selectedFile ? "Select a vendor response workbook first"
                   : !canExportProposals ? "Add Proposed Date values for matched, unambiguous rows to enable export"
-                  : "Replace the current Vendor Date Request with the proposed dates"}>
+                  : "Save the proposed dates in the vendor's Proposed Date folder"}>
                 {exportingProposals
                   ? <><LoaderCircle size={14} className="spin" /> Exporting…</>
                   : <><FileDown size={14} /> Export Vendor Date Request</>}
               </button>
-              <button className="primary-button" onClick={() => setShowConfirm(true)}
+              <button className="primary-button success-button" onClick={() => setShowConfirm(true)}
                 disabled={!selectedFile || !canApplyVendorDates || applying}
                 title={!selectedFile ? "Select a vendor response workbook first"
                   : !canApplyVendorDates ? "Requires accepted Vendor Dates with no unmatched or ambiguous rows"
@@ -1064,6 +1162,7 @@ function VendorImportPage() {
 ═══════════════════════════════════════════════════════════ */
 function VendorTrackPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // Project selection state
   const [projects, setProjects] = useState<string[]>([]);
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
@@ -1178,6 +1277,7 @@ function VendorTrackPage() {
 
   /* ── Toggle project selection ── */
   const toggleProject = (id: string) => {
+    setExportedRequestPath("");
     setSelectedProjects(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -1186,8 +1286,8 @@ function VendorTrackPage() {
     });
   };
 
-  const selectAll = () => setSelectedProjects(new Set(projects));
-  const clearSelection = () => setSelectedProjects(new Set());
+  const selectAll = () => { setExportedRequestPath(""); setSelectedProjects(new Set(projects)); };
+  const clearSelection = () => { setExportedRequestPath(""); setSelectedProjects(new Set()); };
 
   /* ── Run Vendor Track processing ── */
   const runVendorTrack = async () => {
@@ -1196,6 +1296,7 @@ function VendorTrackPage() {
       return;
     }
     setProcessing(true);
+    setExportedRequestPath("");
     setProcessMsg("");
     setProcessError("");
     try {
@@ -1228,6 +1329,8 @@ function VendorTrackPage() {
 
   const [exporting, setExporting] = useState(false);
   const [exportModalData, setExportModalData] = useState<ExportModalData | null>(null);
+  const [exportedRequestPath, setExportedRequestPath] = useState("");
+  const [openingExportExcel, setOpeningExportExcel] = useState(false);
 
   const handleExportDateRequest = async () => {
     setProcessError("");
@@ -1241,6 +1344,7 @@ function VendorTrackPage() {
       return;
     }
     setExporting(true);
+    setExportedRequestPath("");
     try {
       const res = await fetch(`${API}/vendor-track/export-date-request`, {
         method: "POST",
@@ -1254,10 +1358,32 @@ function VendorTrackPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Export failed.");
       setExportModalData(data);
+      setExportedRequestPath(data.output_path || "");
     } catch (e) {
       setProcessError(e instanceof Error ? e.message : "Export failed.");
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleOpenExportExcel = async () => {
+    if (!exportedRequestPath) return;
+    setOpeningExportExcel(true);
+    setProcessError("");
+    setProcessMsg("");
+    try {
+      const res = await fetch(`${API}/vendor-track/import/open-excel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_path: exportedRequestPath }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not open the Vendor Date Request.");
+      setProcessMsg(data.message || "Opened the Vendor Date Request in Excel.");
+    } catch (e) {
+      setProcessError(e instanceof Error ? e.message : "Could not open the Vendor Date Request.");
+    } finally {
+      setOpeningExportExcel(false);
     }
   };
 
@@ -1355,18 +1481,21 @@ function VendorTrackPage() {
         {/* Filters — only show once data is loaded */}
         {processedProjectIds.length > 0 && (
           <div className="vt-sidebar-section vt-filters-section">
-            <div className="vt-section-head">
+            <button className="vt-section-head vt-section-toggle" onClick={() => setFiltersOpen(open => !open)}
+              aria-expanded={filtersOpen} aria-controls="vendor-track-export-filters">
               <Filter size={13} />
               <span>FILTERS</span>
-            </div>
+              <ChevronDown size={14} className={`section-chevron${filtersOpen ? " open" : ""}`} />
+            </button>
 
+            {filtersOpen && <div id="vendor-track-export-filters" className="vt-filter-controls">
             {/* Vendor filter — single select */}
             <label className="vt-filter-field">
               <span>Vendor</span>
               <Combobox
                 value={selectedVendor}
                 options={vendorOptions}
-                onChange={v => { setSelectedVendor(v === "All" ? "All Vendors" : v); setVtPage(1); }}
+                onChange={v => { setExportedRequestPath(""); setSelectedVendor(v === "All" ? "All Vendors" : v); setVtPage(1); }}
                 placeholder="All Vendors"
               />
             </label>
@@ -1377,13 +1506,14 @@ function VendorTrackPage() {
               <MultiCombobox
                 values={selectedWbs}
                 options={wbsOptions}
-                onChange={v => { setSelectedWbs(v); setVtPage(1); }}
+                onChange={v => { setExportedRequestPath(""); setSelectedWbs(v); setVtPage(1); }}
                 placeholder="All"
               />
             </label>
 
             {(selectedVendor !== "All Vendors" || selectedWbs.length > 0) && (
               <button className="reset-button" style={{ marginTop: 4 }} onClick={() => {
+                setExportedRequestPath("");
                 setSelectedVendor("All Vendors");
                 setSelectedWbs([]);
                 setVtPage(1);
@@ -1391,6 +1521,7 @@ function VendorTrackPage() {
                 <RefreshCw size={13} /> Reset filters
               </button>
             )}
+            </div>}
           </div>
         )}
         </>}
@@ -1400,14 +1531,14 @@ function VendorTrackPage() {
       <div className="vt-main">
         {/* Status messages */}
         {processMsg && (
-          <div className="upload-message success-text" style={{ marginBottom: 16 }}>
+          <DismissibleNotice key={processMsg} className="upload-message success-text" style={{ marginBottom: 16 }}>
             <CheckCircle size={14} /> {processMsg}
-          </div>
+          </DismissibleNotice>
         )}
         {processError && (
-          <div className="upload-message error-text" style={{ marginBottom: 16 }}>
+          <DismissibleNotice key={processError} className="upload-message error-text" style={{ marginBottom: 16 }}>
             <AlertTriangle size={14} /> {processError}
-          </div>
+          </DismissibleNotice>
         )}
 
         {/* Table card */}
@@ -1422,6 +1553,13 @@ function VendorTrackPage() {
               </p>
             </div>
             <div className="table-actions">
+              <button className="primary-button excel-button" onClick={handleOpenExportExcel}
+                disabled={!exportedRequestPath || openingExportExcel}
+                title={!exportedRequestPath ? "Export a Vendor Date Request first" : "Open the exported Vendor Date Request in Excel"}>
+                {openingExportExcel
+                  ? <><LoaderCircle size={14} className="spin" /> Opening…</>
+                  : <><FileSpreadsheet size={14} /> Open Excel</>}
+              </button>
               <button
                 id="export-vendor-date-request-btn"
                 className="primary-button"
@@ -1535,10 +1673,10 @@ function VendorTrackPage() {
               </button>
             </div>
             <div className="modal-body">
-              <div className="upload-message success-text">
+              <DismissibleNotice key={exportModalData.message} className="upload-message success-text">
                 <CheckCircle size={15} />
                 <span>{exportModalData.message}</span>
-              </div>
+              </DismissibleNotice>
 
               <div className="export-meta-grid">
                 <div className="meta-label">Vendor Name:</div>
@@ -1598,12 +1736,26 @@ function VendorTrackPage() {
    Root App component
 ═══════════════════════════════════════════════════════════ */
 export default function App() {
-  const [page, setPage] = useState<"shortage" | "input" | "vendortrack">("input");
-  const [vtSubPage, setVtSubPage] = useState<"export" | "import">("export");
+  const [page, setPage] = useState<"shortage" | "input" | "vendortrack">(() => {
+    try {
+      const savedPage = window.localStorage.getItem("abb-sm:selected-page");
+      return savedPage === "shortage" || savedPage === "input" || savedPage === "vendortrack"
+        ? savedPage
+        : "input";
+    } catch { return "input"; }
+  });
+  const [vtSubPage, setVtSubPage] = useState<"export" | "import">(() => {
+    try {
+      return window.localStorage.getItem("abb-sm:vendor-track-subpage") === "import" ? "import" : "export";
+    } catch { return "export"; }
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [shortageSidebarOpen, setShortageSidebarOpen] = useState(true);
+  const [shortageFiltersOpen, setShortageFiltersOpen] = useState(false);
   const [registerProjects, setRegisterProjects] = useState<string[]>([]);
   const [registerExporting, setRegisterExporting] = useState(false);
+  const [registerOpening, setRegisterOpening] = useState(false);
+  const [deletingRegisterProject, setDeletingRegisterProject] = useState("");
   const [registerExportMessage, setRegisterExportMessage] = useState("");
 
   /* Shortage page state */
@@ -1625,6 +1777,13 @@ export default function App() {
   /* Input/shortage project context; each page provides its own project list. */
   const [projects, setProjects] = useState<string[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
+
+  useEffect(() => {
+    try { window.localStorage.setItem("abb-sm:selected-page", page); } catch { /* storage may be unavailable */ }
+  }, [page]);
+  useEffect(() => {
+    try { window.localStorage.setItem("abb-sm:vendor-track-subpage", vtSubPage); } catch { /* storage may be unavailable */ }
+  }, [vtSubPage]);
 
   /* ── Data loaders ── */
   const loadFilters = useCallback(async () => {
@@ -1673,6 +1832,32 @@ export default function App() {
     } catch { /* non-blocking */ }
   }, []);
 
+  const deleteProjectRegister = async (projectId: string) => {
+    const confirmed = window.confirm(
+      `Delete the generated Material Shortage Register for ${projectId}?\n\nThis removes its register workbook and the folder if empty. Source reports and database records will remain.`
+    );
+    if (!confirmed) return;
+
+    setDeletingRegisterProject(projectId);
+    setRegisterExportMessage("");
+    try {
+      const res = await fetch(`${API}/projects/${encodeURIComponent(projectId)}/register`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not delete this project register.");
+      if (selectedProject === projectId) {
+        setSelectedProject("");
+        setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
+        setPageNum(1);
+      }
+      setRegisterExportMessage(data.message || `Deleted the register for ${projectId}.`);
+      await loadRegisterProjects();
+    } catch (e) {
+      setRegisterExportMessage(e instanceof Error ? e.message : "Could not delete this project register.");
+    } finally {
+      setDeletingRegisterProject("");
+    }
+  };
+
   const exportProjectRegister = async () => {
     if (!selectedProject) return;
     setRegisterExporting(true);
@@ -1687,6 +1872,22 @@ export default function App() {
       setRegisterExportMessage(e instanceof Error ? e.message : "Register export failed.");
     } finally {
       setRegisterExporting(false);
+    }
+  };
+
+  const openProjectRegister = async () => {
+    if (!selectedProject) return;
+    setRegisterOpening(true);
+    setRegisterExportMessage("");
+    try {
+      const res = await fetch(`${API}/projects/${encodeURIComponent(selectedProject)}/open-register`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not open the project workbook.");
+      setRegisterExportMessage(data.message || `Opened ${selectedProject}'s register in Excel.`);
+    } catch (e) {
+      setRegisterExportMessage(e instanceof Error ? e.message : "Could not open the project workbook.");
+    } finally {
+      setRegisterOpening(false);
     }
   };
 
@@ -1742,8 +1943,8 @@ export default function App() {
       <aside className={`sidebar${sidebarOpen ? "" : " collapsed"}`}>
         <div className="brand">
           {sidebarOpen && <>
-            <div className="abb-logo">ABB</div>
-            <div><div className="brand-title">Shortage Management</div></div>
+            <img className="abb-logo-image" src="/ABB_logo.svg" alt="ABB" />
+            <div><div className="brand-title">ABB Shortage and Vendor Management</div></div>
           </>}
           <button className="sidebar-toggle"
             onClick={() => setSidebarOpen(o => !o)}
@@ -1829,13 +2030,13 @@ export default function App() {
         </header>
 
         {error && (
-          <div className="alert error">
+          <DismissibleNotice key={error} className="alert error">
             <AlertTriangle size={18} />
             <span>{error}</span>
             <button onClick={() => { loadFilters().catch(() => {}); loadData(); }}>
               <RefreshCw size={14} /> Retry
             </button>
-          </div>
+          </DismissibleNotice>
         )}
 
         {/* ── Shortage page ── */}
@@ -1850,29 +2051,43 @@ export default function App() {
                 </button>
               </div>
               {shortageSidebarOpen && <>
-                <div className="workspace-sidebar-section">
+                <div className="workspace-sidebar-section workspace-projects-section">
                   <div className="workspace-sidebar-label">PROCESSED PROJECTS</div>
                   <button className="reset-button workspace-refresh" onClick={loadRegisterProjects}>
                     <RefreshCw size={13} /> Refresh projects
                   </button>
                   <div className="workspace-project-list">
                     {registerProjects.map(project => (
-                      <button key={project}
-                        className={`workspace-project-item${selectedProject === project ? " selected" : ""}`}
-                        onClick={() => {
-                          setSelectedProject(project);
-                          setPageNum(1);
-                          setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
-                          setRegisterExportMessage("");
-                        }}>
-                        <FolderOpen size={14} /> <span>{project}</span>
-                      </button>
+                      <div key={project} className="workspace-project-row">
+                        <button
+                          className={`workspace-project-item${selectedProject === project ? " selected" : ""}`}
+                          onClick={() => {
+                            setSelectedProject(project);
+                            setPageNum(1);
+                            setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
+                            setRegisterExportMessage("");
+                          }}>
+                          <FolderOpen size={14} /> <span>{project}</span>
+                        </button>
+                        <button className="workspace-project-delete" onClick={() => deleteProjectRegister(project)}
+                          disabled={deletingRegisterProject !== ""} title={`Delete ${project} register`}
+                          aria-label={`Delete ${project} register`}>
+                          {deletingRegisterProject === project
+                            ? <LoaderCircle size={14} className="spin" />
+                            : <Trash2 size={14} />}
+                        </button>
+                      </div>
                     ))}
                     {registerProjects.length === 0 && <div className="workspace-empty">No project registers found.</div>}
                   </div>
                 </div>
                 <div className="workspace-sidebar-section">
-                  <div className="workspace-sidebar-label"><Filter size={13} /> FILTERS</div>
+                  <button className="workspace-sidebar-label section-toggle" onClick={() => setShortageFiltersOpen(open => !open)}
+                    aria-expanded={shortageFiltersOpen} aria-controls="shortage-register-filters">
+                    <Filter size={13} /> <span>FILTERS</span>
+                    <ChevronDown size={14} className={`section-chevron${shortageFiltersOpen ? " open" : ""}`} />
+                  </button>
+                  {shortageFiltersOpen && <div id="shortage-register-filters">
                   {(Object.keys(filterLabels) as (keyof Filters)[]).map(key => (
                     <label className="filter-field" key={key}>
                       <span>{filterLabels[key]}</span>
@@ -1884,6 +2099,7 @@ export default function App() {
                     setSelected({ material_ref_code: "All", wbs_element: "All", material_code: "All", scope: "All" });
                     setPageNum(1);
                   }}><RefreshCw size={14} /> Reset filters</button>
+                  </div>}
                 </div>
               </>}
             </aside>
@@ -1895,14 +2111,18 @@ export default function App() {
                   <p>Material-level inventory and procurement position</p>
                 </div>
                 <div className="table-actions">
+                  <button className="primary-button excel-button" onClick={openProjectRegister}
+                    disabled={!selectedProject || registerOpening}
+                    title={!selectedProject ? "Select a processed project first" : "Open this project's Material Shortage Register in Excel"}>
+                    {registerOpening
+                      ? <><LoaderCircle size={14} className="spin" /> Opening…</>
+                      : <><FileSpreadsheet size={14} /> Open Excel</>}
+                  </button>
                   <button className="outline-button" onClick={exportProjectRegister}
                     disabled={!selectedProject || registerExporting}>
                     {registerExporting
                       ? <><LoaderCircle size={14} className="spin" /> Exporting…</>
                       : <><FileSpreadsheet size={14} /> Export Project Excel</>}
-                  </button>
-                  <button className="primary-button" onClick={() => setPage("input")}>
-                    <UploadCloud size={16} /> Import data
                   </button>
                 </div>
               </div>
@@ -1981,7 +2201,11 @@ export default function App() {
                 </div>
               </div>
             </section>
-            {registerExportMessage && <div className="upload-message success-text"><CheckCircle size={14} /> {registerExportMessage}</div>}
+            {registerExportMessage && (
+              <DismissibleNotice key={registerExportMessage} className="upload-message success-text">
+                <CheckCircle size={14} /> {registerExportMessage}
+              </DismissibleNotice>
+            )}
             <div className="footnote">
               <Activity size={14} /> Data shown from the local shortage database. Verify imported values against source SAP reports.
             </div>

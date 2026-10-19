@@ -7,7 +7,7 @@ Features:
     * First: All three date cells (Vendor Date, Proposed Date, Final Date) are empty across all rows.
     * Second: At least one date cell across any row is populated.
 - Saves under:
-    Vendor Registers/<Vendor_Folder>/Outgoing/Vendor_Date_Request/<Remark>.xlsx
+    Vendor Registers/<Vendor_Folder>/Date Request/<Remark>.xlsx
 - Versioning scheme:
     Preserves previous exports for traceability (First.xlsx -> First_v2.xlsx, etc.).
 - Requires single-vendor selection; rejects empty datasets and multi-vendor batches.
@@ -23,7 +23,7 @@ import sqlite3
 from typing import Any
 
 import openpyxl
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill, Protection
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
@@ -183,6 +183,7 @@ def build_vendor_request_workbook(
             cell = ws.cell(row=r_idx, column=c_idx)
             if col_name in TEXT_COLUMNS:
                 cell.number_format = "@"
+            cell.protection = Protection(locked=col_name not in {"Vendor Date", "Proposed Date"})
 
     # Freeze header row
     ws.freeze_panes = "A2"
@@ -209,6 +210,12 @@ def build_vendor_request_workbook(
     )
     ws.add_table(tab)
 
+    # Protect every request field except the two dates vendors may update.
+    # Keep filtering and sorting available for the Excel table.
+    ws.protection.sheet = True
+    ws.protection.autoFilter = False
+    ws.protection.sort = False
+
     return wb
 
 
@@ -222,7 +229,7 @@ def export_vendor_date_request(
     """
     Export the currently filtered Vendor Track records for a single vendor.
     Follows First/Second remark rule and saves to:
-    Vendor Registers/<vendor>/Outgoing/Vendor_Date_Request/<Remark>.xlsx
+    Vendor Registers/<vendor>/Date Request/<Remark>.xlsx
     """
     clean_vendor = (vendor or "").strip()
     if not clean_vendor or clean_vendor in ("All Vendors", "All"):
@@ -298,9 +305,9 @@ def export_vendor_date_request(
     # Calculate First/Second remark
     remark = calculate_batch_remark(rows)
 
-    # Destination folder: Vendor Registers/<Vendor>/Outgoing/Vendor_Date_Request/
+    # Destination folder: Vendor Registers/<Vendor>/Date Request/
     folder_name = sanitize_vendor_folder_name(clean_vendor)
-    dest_dir = Path(output_root) / folder_name / "Outgoing" / "Vendor_Date_Request"
+    dest_dir = Path(output_root) / folder_name / "Date Request"
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     # Versioned file path

@@ -1,3 +1,4 @@
+
 # Format.md — ABB Shortage Management System
 ## Input Report Formats, Naming Rules, Parsing Specifications, and Database Schemas
 

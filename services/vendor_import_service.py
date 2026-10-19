@@ -15,6 +15,7 @@ import datetime
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import tempfile
 from typing import Any
@@ -33,6 +34,7 @@ DEFAULT_VENDOR_REGISTERS_DIR = Path(
 DEFAULT_VENDOR_DATE_REGISTERS_DIR = Path(
     os.getenv("VENDOR_DATE_REGISTERS_DIR", str(PROJECT_ROOT / "Vendor Date Registers"))
 )
+DEFAULT_SUBMITTED_FINAL_DATE_DIR = PROJECT_ROOT / "Submitted Final Date"
 
 DATE_COLUMNS = {"vendor_date", "proposed_date", "final_date"}
 
@@ -91,12 +93,13 @@ def discover_vendor_response_files(
                 continue
             if p.name.startswith("~$"):
                 continue
-            # Avoid picking up newly exported Date Requests inside Outgoing directories
-            norm_parts = [part.lower() for part in p.parts]
-            is_outgoing = "outgoing" in norm_parts
-
             # Relative path from root
             rel = p.relative_to(root)
+            norm_parts = [part.casefold() for part in rel.parts]
+            # These folders contain files generated for vendors, not responses to import.
+            is_outgoing = any(part in {"outgoing", "date request", "proposed date", "vendor_date_request"} for part in norm_parts)
+            if is_outgoing:
+                continue
             vendor_folder = rel.parts[0] if len(rel.parts) > 1 else "Root"
 
             stat = p.stat()
@@ -280,6 +283,22 @@ def apply_vendor_response(
     preview = preview_vendor_response(file_path, db_path=db_path)
     items = preview["items"]
 
+    source_vendor_folder = ""
+    resolved_file = file_path.resolve()
+    for source_root in (DEFAULT_VENDOR_REGISTERS_DIR, DEFAULT_VENDOR_DATE_REGISTERS_DIR):
+        try:
+            relative = resolved_file.relative_to(source_root.resolve())
+        except ValueError:
+            continue
+        if len(relative.parts) > 1:
+            source_vendor_folder = relative.parts[0]
+            break
+    if not source_vendor_folder:
+        vendor_values = sorted({clean_text(item.get("vendor")) for item in items if clean_text(item.get("vendor"))})
+        source_vendor_folder = vendor_values[0] if len(vendor_values) == 1 else "Unknown Vendor"
+    from services.vendor_request_export import sanitize_vendor_folder_name
+    archive_vendor_folder = sanitize_vendor_folder_name(source_vendor_folder)
+
     updated_count = 0
     affected_projects: set[str] = set()
 
@@ -298,6 +317,9 @@ def apply_vendor_response(
                 )
                 """
             )
+            history_columns = {row[1].casefold() for row in conn.execute("PRAGMA table_info(import_history)")}
+            if "vendor_folder" not in history_columns:
+                conn.execute('ALTER TABLE import_history ADD COLUMN "vendor_folder" TEXT')
 
             tables = {r[0].casefold() for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             has_vt = "vendor_track" in tables
@@ -355,11 +377,12 @@ def apply_vendor_response(
             # Record history entry
             conn.execute(
                 """
-                INSERT INTO import_history (filename, imported_at, rows_updated, affected_projects)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO import_history (filename, vendor_folder, imported_at, rows_updated, affected_projects)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     file_path.name,
+                    source_vendor_folder,
                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     updated_count,
                     ", ".join(sorted(affected_projects)),
@@ -377,18 +400,43 @@ def apply_vendor_response(
         except Exception as exc:
             refresh_errors.append({"project_id": pid, "error": str(exc)})
 
+    archived_path = None
+    archive_error = None
+    if updated_count > 0:
+        try:
+            archive_dir = DEFAULT_SUBMITTED_FINAL_DATE_DIR / archive_vendor_folder
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_target = archive_dir / file_path.name
+            version = 2
+            while archive_target.exists():
+                archive_target = archive_dir / f"{file_path.stem}_v{version}{file_path.suffix}"
+                version += 1
+            shutil.move(str(file_path), str(archive_target))
+            archived_path = str(archive_target.resolve())
+        except Exception as exc:
+            archive_error = str(exc)
+
+    message = (
+        f"Applied {updated_count} Vendor Dates across {len(affected_projects)} projects."
+        if not refresh_errors else
+        f"Applied dates to the database, but {len(refresh_errors)} project register(s) could not be refreshed."
+    )
+    if archive_error:
+        message += f" The update was applied, but the response workbook could not be moved to Submitted Final Date: {archive_error}"
+    elif archived_path:
+        message += f" Archived the response workbook under Submitted Final Date/{archive_vendor_folder}."
+
     return {
-        "success": not refresh_errors,
+        "success": not refresh_errors and not archive_error,
         "filename": file_path.name,
+        "vendor_folder": source_vendor_folder,
         "rows_updated": updated_count,
         "affected_projects": sorted(affected_projects),
         "refreshed_registers": refreshed_registers,
         "refresh_errors": refresh_errors,
-        "message": (
-            f"Applied {updated_count} Vendor Dates across {len(affected_projects)} projects."
-            if not refresh_errors else
-            f"Applied dates to the database, but {len(refresh_errors)} project register(s) could not be refreshed."
-        ),
+        "archived_path": archived_path,
+        "archive_error": archive_error,
+        "message": message,
     }
 
 
@@ -396,10 +444,10 @@ def export_proposed_response(
     file_path: Path,
     vendor_registers_dir: Path = DEFAULT_VENDOR_REGISTERS_DIR,
 ) -> dict[str, Any]:
-    """Export proposed rows to the same First/Second request path as Export.
+    """Export proposed rows into the vendor's Proposed Date folder.
 
-    A repeated counteroffer replaces the canonical request workbook so the
-    vendor folder does not accumulate competing versions of the same cycle.
+    A repeated counteroffer replaces the canonical First/Second workbook in
+    that folder so the vendor folder does not accumulate competing proposals.
     """
     preview = preview_vendor_response(file_path)
     rows = [
@@ -433,7 +481,7 @@ def export_proposed_response(
         # Final Date is populated only by the explicit Update action.
         "Final Date": "",
     } for item in rows]
-    dest_dir = Path(vendor_registers_dir) / sanitize_vendor_folder_name(vendor) / "Outgoing" / "Vendor_Date_Request"
+    dest_dir = Path(vendor_registers_dir) / sanitize_vendor_folder_name(vendor) / "Proposed Date"
     dest_dir.mkdir(parents=True, exist_ok=True)
     remark = calculate_batch_remark(export_rows)
     output = dest_dir / f"{remark}.xlsx"

@@ -12,7 +12,9 @@ Provides:
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,7 @@ from pydantic import BaseModel
 from .database import ROOT, SERVICES_DB, SHORTAGE_REGISTERS_DIR, VENDOR_REGISTERS_DIR, VENDOR_DATE_REGISTERS_DIR
 from services.vendortrack_service import refresh_vendor_track_from_registers
 from services.vendor_request_export import export_vendor_date_request
+from services.vendor_request_export import sanitize_vendor_folder_name
 from services.vendor_import_service import (
     discover_vendor_response_files,
     preview_vendor_response,
@@ -353,7 +356,7 @@ def get_vt_wbs_elements(
 def export_vendor_date_request_endpoint(body: VendorDateRequestExportModel):
     """
     Export currently filtered Vendor Track records for a single vendor to:
-    Vendor Registers/<vendor>/Outgoing/Vendor_Date_Request/<Remark>.xlsx
+    Vendor Registers/<vendor>/Date Request/<Remark>.xlsx
     """
     clean_vendor = body.vendor.strip() if body.vendor else ""
     if not clean_vendor or clean_vendor in ("All Vendors", "All"):
@@ -457,6 +460,30 @@ def preview_import_file(body: VendorImportApplyModel):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/import/open-excel")
+def open_import_file_in_excel(body: VendorImportApplyModel):
+    """Open a selected vendor workbook using the Windows file association."""
+    file_path = Path(body.file_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path.name}")
+    if file_path.suffix.lower() not in (".xlsx", ".xlsm", ".xls"):
+        raise HTTPException(status_code=400, detail="Selected file is not a supported Excel workbook.")
+    if not _is_allowed_vendor_file(file_path):
+        raise HTTPException(
+            status_code=403,
+            detail="File is outside the allowed Vendor Registers directories.",
+        )
+
+    start_file = getattr(os, "startfile", None)
+    if not callable(start_file):
+        raise HTTPException(status_code=501, detail="Opening Excel files is supported only on Windows.")
+    try:
+        start_file(str(file_path.resolve()))
+        return {"success": True, "message": f"Opened {file_path.name} in its associated Excel application."}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not open {file_path.name}: {exc}") from exc
+
+
 @router.post("/import/apply")
 def apply_import_file(body: VendorImportApplyModel):
     """
@@ -512,3 +539,43 @@ def get_import_history_endpoint():
         return {"history": get_import_history(db_path=SERVICES_DB)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/import/submitted-final-date")
+def list_submitted_final_date_folders():
+    """List vendor folders containing accepted response workbooks."""
+    archive_root = (ROOT / "Submitted Final Date").resolve()
+    if not archive_root.is_dir():
+        return {"folders": []}
+    folders = []
+    for entry in sorted(archive_root.iterdir(), key=lambda path: path.name.casefold()):
+        if not entry.is_dir():
+            continue
+        resolved = entry.resolve()
+        try:
+            resolved.relative_to(archive_root)
+        except ValueError:
+            continue
+        file_count = sum(1 for item in resolved.rglob("*") if item.is_file())
+        folders.append({"name": entry.name, "file_count": file_count})
+    return {"folders": folders}
+
+
+@router.delete("/import/submitted-final-date/{vendor_folder}")
+def delete_submitted_final_date_folder(vendor_folder: str):
+    """Delete one archived vendor response folder without affecting import history."""
+    if not vendor_folder or Path(vendor_folder).name != vendor_folder or sanitize_vendor_folder_name(vendor_folder) != vendor_folder:
+        raise HTTPException(status_code=400, detail="Invalid archived vendor folder name.")
+    archive_root = (ROOT / "Submitted Final Date").resolve()
+    folder = (archive_root / vendor_folder).resolve()
+    try:
+        folder.relative_to(archive_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Archived folder is outside Submitted Final Date.") from exc
+    if not folder.is_dir():
+        raise HTTPException(status_code=404, detail=f"Submitted Final Date folder '{vendor_folder}' was not found.")
+    try:
+        shutil.rmtree(folder)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not delete archived folder '{vendor_folder}': {exc}") from exc
+    return {"success": True, "message": f"Deleted Submitted Final Date/{vendor_folder} and its archived files."}

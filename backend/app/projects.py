@@ -10,6 +10,7 @@ Provides:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -406,5 +407,73 @@ def get_project_register_info(project_id: str):
         "filename": target.name if exists else None,
         "path": str(target.resolve()) if exists else None,
         "size_bytes": target.stat().st_size if exists else 0,
+    }
+
+
+@router.post("/{project_id}/open-register")
+def open_project_register(project_id: str):
+    """Open the selected project's generated Material Shortage Register in Excel."""
+    info = get_project_register_info(project_id)
+    if not info["exists"]:
+        raise HTTPException(status_code=404, detail=f"No Excel register exists yet for {project_id}. Export the project register first.")
+
+    target = Path(info["path"]).resolve()
+    try:
+        target.relative_to(SHORTAGE_REGISTERS_DIR.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Register file is outside the Material Shortage Registers folder.") from exc
+    if target.suffix.lower() not in {".xlsx", ".xlsm", ".xls"}:
+        raise HTTPException(status_code=400, detail="The project register is not a supported Excel workbook.")
+
+    start_file = getattr(os, "startfile", None)
+    if not callable(start_file):
+        raise HTTPException(status_code=501, detail="Opening Excel files is supported only on Windows.")
+    try:
+        start_file(str(target))
+        return {"success": True, "message": f"Opened {target.name} in its associated Excel application."}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not open {target.name}: {exc}") from exc
+
+
+@router.delete("/{project_id}/register")
+def delete_project_register(project_id: str):
+    """Delete only the generated register workbook for a processed project."""
+    if not _valid_project_id(project_id):
+        raise HTTPException(status_code=400, detail=f"Invalid project ID {project_id!r}.")
+
+    registers_root = SHORTAGE_REGISTERS_DIR.resolve()
+    project_dir = (SHORTAGE_REGISTERS_DIR / project_id).resolve()
+    try:
+        project_dir.relative_to(registers_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Project register folder is outside Material Shortage Registers.") from exc
+
+    workbook = (project_dir / f"{project_id}_Net_shortage_Table.xlsx").resolve()
+    try:
+        workbook.relative_to(registers_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Project workbook is outside Material Shortage Registers.") from exc
+    if not workbook.is_file():
+        raise HTTPException(status_code=404, detail=f"No generated register workbook found for {project_id}.")
+
+    try:
+        workbook.unlink()
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Could not delete {workbook.name}. Close it in Excel and try again.",
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not delete {workbook.name}: {exc}") from exc
+
+    try:
+        project_dir.rmdir()  # Remove the project folder only when it is now empty.
+    except OSError:
+        pass
+
+    return {
+        "success": True,
+        "project_id": project_id,
+        "message": f"Deleted the generated Material Shortage Register for {project_id}.",
     }
 

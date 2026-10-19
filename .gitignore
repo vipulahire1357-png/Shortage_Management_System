@@ -161,5 +161,23 @@ Vendor Date Registers/**/*.XLSX
 Vendor Date Registers/**/*.XLSM
 Vendor Date Registers/**/*.XLSB
 
+# Accepted vendor response workbooks archived after Final Date updates
+Submitted Final Date/*.xls
+Submitted Final Date/*.xlsx
+Submitted Final Date/*.xlsm
+Submitted Final Date/*.xlsb
+Submitted Final Date/**/*.xls
+Submitted Final Date/**/*.xlsx
+Submitted Final Date/**/*.xlsm
+Submitted Final Date/**/*.xlsb
+Submitted Final Date/*.XLS
+Submitted Final Date/*.XLSX
+Submitted Final Date/*.XLSM
+Submitted Final Date/*.XLSB
+Submitted Final Date/**/*.XLS
+Submitted Final Date/**/*.XLSX
+Submitted Final Date/**/*.XLSM
+Submitted Final Date/**/*.XLSB
+
 # Microsoft Excel temporary/lock files
 ~$*.xls*
