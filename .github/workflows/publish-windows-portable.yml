@@ -49,7 +49,7 @@ jobs:
           $rootDist = Join-Path $PWD 'dist'
           if (Test-Path $package) { Remove-Item $package -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $package | Out-Null
-          robocopy $PWD $package /E /XD .git .venv node_modules build $rootDist __pycache__ .pytest_cache .mypy_cache .ruff_cache projects global data logs 'Material Shortage Registers' 'Vendor Registers' 'Vendor Date Registers' 'Submitted Final Date' /XF *.db *.sqlite *.sqlite3 *.log *.pyc *.xls *.xlsx *.xlsm *.xlsb *.htm *.html *.csv *.tsv *.pdf .env .env.* | Out-Null
+          robocopy $PWD $package /E /XD .git .venv node_modules build $rootDist __pycache__ .pytest_cache .mypy_cache .ruff_cache projects global data logs 'Material Shortage Registers' 'Vendor Registers' 'Vendor Date Registers' 'Submitted Final Date' /XF *.db *.sqlite *.sqlite3 *.log *.pyc *.xls *.xlsx *.xlsm *.xlsb *.htm *.csv *.tsv *.pdf .env .env.* | Out-Null
           if ($LASTEXITCODE -ge 8) { throw "Source copy failed with robocopy exit code $LASTEXITCODE" }
           $runtime = Join-Path $package 'runtime'
           New-Item -ItemType Directory -Force -Path $runtime | Out-Null
