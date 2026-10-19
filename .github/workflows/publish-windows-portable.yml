@@ -1,0 +1,104 @@
+name: Publish portable Windows release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Assemble portable package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Join-Path $env:RUNNER_TEMP 'ABB_Shortage_System'
+          $rootDist = Join-Path $PWD 'dist'
+          if (Test-Path $package) { Remove-Item $package -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          robocopy $PWD $package /E /XD .git .venv node_modules build $rootDist __pycache__ .pytest_cache .mypy_cache .ruff_cache projects global data logs 'Material Shortage Registers' 'Vendor Registers' 'Vendor Date Registers' 'Submitted Final Date' /XF *.db *.sqlite *.sqlite3 *.log *.pyc *.xls *.xlsx *.xlsm *.xlsb *.htm *.html *.csv *.tsv *.pdf .env .env.* | Out-Null
+          if ($LASTEXITCODE -ge 8) { throw "Source copy failed with robocopy exit code $LASTEXITCODE" }
+          $runtime = Join-Path $package 'runtime'
+          New-Item -ItemType Directory -Force -Path $runtime | Out-Null
+          robocopy $env:pythonLocation $runtime /E /XD __pycache__ /XF *.pyc | Out-Null
+          if ($LASTEXITCODE -ge 8) { throw "Python runtime copy failed with robocopy exit code $LASTEXITCODE" }
+          Copy-Item packaging\run_portable.bat (Join-Path $package 'run_app.bat') -Force
+          New-Item -ItemType Directory -Force -Path (Join-Path $package 'projects'), (Join-Path $package 'global'), (Join-Path $package 'data\raw'), (Join-Path $package 'Material Shortage Registers'), (Join-Path $package 'Vendor Registers'), (Join-Path $package 'Vendor Date Registers') | Out-Null
+          @'
+          ABB Shortage and Vendor Management - Portable Windows Build
+
+          1. Extract the complete ZIP file to a writable folder.
+          2. Double-click run_app.bat.
+          3. Keep the launcher window open while using the app. Press a key in it to stop the server.
+
+          The ZIP includes the frontend and Python runtime; Python and Node.js do not need to be installed.
+          Application data folders are created beside the launcher. Back them up before moving or deleting the folder.
+          '@ | Set-Content -LiteralPath (Join-Path $package 'PORTABLE_README.txt') -Encoding utf8
+          if (-not (Test-Path (Join-Path $package 'runtime\python.exe'))) { throw 'Bundled Python executable is missing.' }
+          if (-not (Test-Path (Join-Path $package 'frontend\dist\index.html'))) { throw 'Built frontend is missing.' }
+          $archive = Join-Path $env:RUNNER_TEMP 'ABB_Shortage_System_Portable_Windows.zip'
+          Compress-Archive -Path $package -DestinationPath $archive -CompressionLevel Optimal
+
+      - name: Smoke-check packaged backend and frontend
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'ABB_Shortage_System'
+          $python = Join-Path $root 'runtime\python.exe'
+          Push-Location $root
+          try {
+            $proc = Start-Process -FilePath $python -ArgumentList @('-m','uvicorn','backend.app.main:app','--host','127.0.0.1','--port','8019') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'smoke.log') -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'smoke-error.log')
+            try {
+              $ready = $false
+              for ($i = 0; $i -lt 30; $i++) {
+                try { $health = Invoke-RestMethod 'http://127.0.0.1:8019/api/health' -TimeoutSec 2; $ready = $health.status -eq 'ok'; if ($ready) { break } } catch { Start-Sleep -Seconds 1 }
+              }
+              if (-not $ready) { Get-Content (Join-Path $env:RUNNER_TEMP 'smoke-error.log') -ErrorAction SilentlyContinue; throw 'Packaged backend health check failed.' }
+              $page = Invoke-WebRequest 'http://127.0.0.1:8019/' -TimeoutSec 5
+              if ($page.StatusCode -ne 200) { throw 'Packaged frontend did not return HTTP 200.' }
+            }
+            finally { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
+          finally { Pop-Location }
+
+      - name: Attach portable ZIP to this release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ runner.temp }}/ABB_Shortage_System_Portable_Windows.zip
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

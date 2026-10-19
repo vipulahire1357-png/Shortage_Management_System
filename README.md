@@ -2,6 +2,14 @@
 
 A project-aware shortage management application combining React dashboard + FastAPI backend + SQLite databases. Users select a project, verify SAP reports, click **Process All Reports**, and instantly see the calculated shortage register — no manual file moving required.
 
+## Run on another Windows computer
+
+The [GitHub Releases page](https://github.com/vipulahire1357-png/Shortage_Management_System/releases) provides a portable Windows ZIP. Download `ABB_Shortage_System_Portable_Windows.zip`, extract the **complete** ZIP to a writable folder, and double-click `run_app.bat`. The portable package includes the built frontend and Python runtime, so Python and Node.js do not need to be installed. Keep the launcher window open while using the app; press a key in it to stop the server.
+
+You can also clone the project or download its source ZIP and run the root `run_app.bat`. On first run, it downloads and extracts the portable package from the latest GitHub release, then starts it. This source launcher requires internet access and PowerShell. For a direct offline install, download the portable ZIP instead.
+
+Operational project files and generated databases are stored beside the portable launcher. Keep the extracted application folder in a writable location and back up its project, global, Material Shortage Registers, Vendor Registers, and Vendor Date Registers folders when needed.
+
 ---
 
 ## Project Structure

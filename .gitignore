@@ -21,6 +21,8 @@ venv/
 env/
 ENV/
 .conda/
+portable_windows/
+backend.pid
 
 # Local environment variables and credentials
 .env
