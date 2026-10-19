@@ -51,10 +51,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path $package | Out-Null
           robocopy $PWD $package /E /XD .git .venv node_modules build $rootDist __pycache__ .pytest_cache .mypy_cache .ruff_cache projects global data logs 'Material Shortage Registers' 'Vendor Registers' 'Vendor Date Registers' 'Submitted Final Date' /XF *.db *.sqlite *.sqlite3 *.log *.pyc *.xls *.xlsx *.xlsm *.xlsb *.htm *.csv *.tsv *.pdf .env .env.* | Out-Null
           if ($LASTEXITCODE -ge 8) { throw "Source copy failed with robocopy exit code $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
           $runtime = Join-Path $package 'runtime'
           New-Item -ItemType Directory -Force -Path $runtime | Out-Null
           robocopy $env:pythonLocation $runtime /E /XD __pycache__ /XF *.pyc | Out-Null
           if ($LASTEXITCODE -ge 8) { throw "Python runtime copy failed with robocopy exit code $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
           Copy-Item packaging\run_portable.bat (Join-Path $package 'run_app.bat') -Force
           New-Item -ItemType Directory -Force -Path (Join-Path $package 'projects'), (Join-Path $package 'global'), (Join-Path $package 'data\raw'), (Join-Path $package 'Material Shortage Registers'), (Join-Path $package 'Vendor Registers'), (Join-Path $package 'Vendor Date Registers') | Out-Null
           @'
@@ -71,6 +73,7 @@ jobs:
           if (-not (Test-Path (Join-Path $package 'frontend\dist\index.html'))) { throw 'Built frontend is missing.' }
           $archive = Join-Path $env:RUNNER_TEMP 'ABB_Shortage_System_Portable_Windows.zip'
           Compress-Archive -Path $package -DestinationPath $archive -CompressionLevel Optimal
+          $global:LASTEXITCODE = 0
 
       - name: Smoke-check packaged backend and frontend
         shell: pwsh
