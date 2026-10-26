@@ -1,3 +1,5 @@
-$ErrorActionPreference = "Stop"
-if (!(Test-Path ".venv\Scripts\python.exe")) { throw "Create the .venv and install requirements first. See README.md." }
-.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$launcher = Join-Path $root 'packaging\run_app.ps1'
+if (-not (Test-Path -LiteralPath $launcher)) { throw "Backend launcher is missing: $launcher" }
+& $launcher -DevelopmentMode -Background -NoBrowser

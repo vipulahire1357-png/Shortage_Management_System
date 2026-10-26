@@ -1,30 +1,24 @@
-# ============================================================
-# ABB Shortage Management System
-# Keep source code, project configuration, dependency manifests,
-# and documentation in Git. Ignore local/runtime/generated data.
-# ============================================================
-
-# Python caches and test artifacts
+# Python caches, test output, and virtual environments
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.coverage
-.coverage.*
+.coverage*
 htmlcov/
-
-# Virtual environments
 .venv/
 venv/
 env/
 ENV/
 .conda/
+
+# Local portable runtime and per-project process state
 portable_windows/
 backend.pid
+.runtime/
 
-# Local environment variables and credentials
+# Secrets and local configuration
 .env
 .env.*
 !.env.example
@@ -32,7 +26,7 @@ backend.pid
 *.pem
 *.key
 
-# IDE and operating-system files
+# Editors and operating-system files
 .vscode/
 .idea/
 *.swp
@@ -42,7 +36,7 @@ backend.pid
 Thumbs.db
 Desktop.ini
 
-# Node.js dependencies and Vite build/cache output
+# Frontend dependencies and generated output
 node_modules/
 frontend/dist/
 frontend/.vite/
@@ -50,7 +44,7 @@ npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 
-# Logs and temporary files
+# Logs and temporary/backup files
 logs/*
 !logs/.gitkeep
 !logs/README.md
@@ -62,124 +56,36 @@ logs/*
 *.backup_*
 *.old
 
-# SQLite databases and journal / write-ahead-log files
+# SQLite databases and sidecar files
 *.db
 *.sqlite
 *.sqlite3
-*.db-journal
-*.sqlite-journal
-*.db-wal
-*.db-shm
-*.sqlite-wal
-*.sqlite-shm
+*.db-*
+*.sqlite-*
 
-# Runtime staging and processed data; retain documentation/placeholders
+# Runtime input/output data; keep placeholders and documentation
 data/raw/*
 !data/raw/README.md
 data/processed/*
 !data/processed/.gitkeep
-data/*.db
-data/**/*.db
 
-# Project-specific operational report files
-# Project directories can exist in Git, but local SAP workbooks/reports
-# should not be newly added to source control.
-projects/**/*.xls
-projects/**/*.xlsx
-projects/**/*.xlsm
-projects/**/*.xlsb
-projects/**/*.htm
-projects/**/*.html
+# Operational files inside per-project and global SAP data directories
+projects/**/*.xls*
+projects/**/*.htm*
 projects/**/*.csv
 projects/**/*.txt
 projects/**/*.tsv
 projects/**/*.pdf
-
-# Shared/global operational SAP report files
-global/**/*.xls
-global/**/*.xlsx
-global/**/*.xlsm
-global/**/*.xlsb
-global/**/*.htm
-global/**/*.html
+global/**/*.xls*
+global/**/*.htm*
 global/**/*.csv
 global/**/*.txt
 global/**/*.tsv
 global/**/*.pdf
 
-# Generated Material Shortage Register Excel files
-# Ignore workbook files only; allow directories, placeholders, and documentation.
-Material Shortage Registers/*.xls
-Material Shortage Registers/*.xlsx
-Material Shortage Registers/*.xlsm
-Material Shortage Registers/*.xlsb
-Material Shortage Registers/*.XLS
-Material Shortage Registers/*.XLSX
-Material Shortage Registers/*.XLSM
-Material Shortage Registers/*.XLSB
-Material Shortage Registers/**/*.xls
-Material Shortage Registers/**/*.xlsx
-Material Shortage Registers/**/*.xlsm
-Material Shortage Registers/**/*.xlsb
-Material Shortage Registers/**/*.XLS
-Material Shortage Registers/**/*.XLSX
-Material Shortage Registers/**/*.XLSM
-Material Shortage Registers/**/*.XLSB
-
-# Generated Vendor Registers and vendor-facing Excel files
-# Ignore workbook files only; preserve vendor and workflow folder structure.
-Vendor Registers/*.xls
-Vendor Registers/*.xlsx
-Vendor Registers/*.xlsm
-Vendor Registers/*.xlsb
-Vendor Registers/*.XLS
-Vendor Registers/*.XLSX
-Vendor Registers/*.XLSM
-Vendor Registers/*.XLSB
-Vendor Registers/**/*.xls
-Vendor Registers/**/*.xlsx
-Vendor Registers/**/*.xlsm
-Vendor Registers/**/*.xlsb
-Vendor Registers/**/*.XLS
-Vendor Registers/**/*.XLSX
-Vendor Registers/**/*.XLSM
-Vendor Registers/**/*.XLSB
-
-# Vendor Date Registers (incoming vendor response workbooks)
-Vendor Date Registers/*.xls
-Vendor Date Registers/*.xlsx
-Vendor Date Registers/*.xlsm
-Vendor Date Registers/*.xlsb
-Vendor Date Registers/*.XLS
-Vendor Date Registers/*.XLSX
-Vendor Date Registers/*.XLSM
-Vendor Date Registers/*.XLSB
-Vendor Date Registers/**/*.xls
-Vendor Date Registers/**/*.xlsx
-Vendor Date Registers/**/*.xlsm
-Vendor Date Registers/**/*.xlsb
-Vendor Date Registers/**/*.XLS
-Vendor Date Registers/**/*.XLSX
-Vendor Date Registers/**/*.XLSM
-Vendor Date Registers/**/*.XLSB
-
-# Accepted vendor response workbooks archived after Final Date updates
-Submitted Final Date/*.xls
-Submitted Final Date/*.xlsx
-Submitted Final Date/*.xlsm
-Submitted Final Date/*.xlsb
-Submitted Final Date/**/*.xls
-Submitted Final Date/**/*.xlsx
-Submitted Final Date/**/*.xlsm
-Submitted Final Date/**/*.xlsb
-Submitted Final Date/*.XLS
-Submitted Final Date/*.XLSX
-Submitted Final Date/*.XLSM
-Submitted Final Date/*.XLSB
-Submitted Final Date/**/*.XLS
-Submitted Final Date/**/*.XLSX
-Submitted Final Date/**/*.XLSM
-Submitted Final Date/**/*.XLSB
-
-# Microsoft Excel temporary/lock files
+# Generated registers and vendor workbooks; keep folder structure and docs
+Material Shortage Registers/**/*.xls*
+Vendor Registers/**/*.xls*
+Vendor Date Registers/**/*.xls*
+Submitted Final Date/**/*.xls*
 ~$*.xls*

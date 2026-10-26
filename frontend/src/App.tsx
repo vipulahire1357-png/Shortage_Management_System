@@ -1810,7 +1810,7 @@ export default function App() {
       if (!res.ok) throw new Error("API error");
       setPayload(await res.json());
     } catch {
-      setError("Cannot connect to the backend. Start FastAPI on http://127.0.0.1:8000 and refresh.");
+      setError("Cannot connect to the backend. Start this project's backend and refresh.");
     } finally { setLoading(false); }
   }, [selected, pageNum, pageSize, sort, selectedProject, page]);
 
