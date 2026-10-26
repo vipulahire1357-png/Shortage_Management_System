@@ -1,19 +1,21 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title ABB Shortage and Vendor Management
+title ABB Shortage and Vendor Management - Portable Project
 set "PYTHON=%~dp0runtime\python.exe"
 set "STARTER=%~dp0packaging\start_backend.ps1"
 set "URL=http://127.0.0.1:8000"
 set "PIDFILE=%~dp0backend.pid"
 if not exist "%PYTHON%" (echo ERROR: Bundled Python runtime is missing.& pause & exit /b 1)
+if not exist "%~dp0backend\app\main.py" (echo ERROR: Backend is missing from this portable project folder.& pause & exit /b 1)
 if not exist "%~dp0frontend\dist\index.html" (echo ERROR: Built frontend is missing.& pause & exit /b 1)
+if not exist "%STARTER%" (echo ERROR: This portable project's backend launcher is missing.& pause & exit /b 1)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%STARTER%"
 if errorlevel 1 (echo ERROR: Backend could not be started.& pause & exit /b 1)
 echo Waiting for the application to become ready...
 set /a ATTEMPTS=0
 :wait_for_api
-powershell.exe -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing -Uri '%URL%/api/health' -TimeoutSec 2 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>nul
+powershell.exe -NoProfile -Command "$expected=[IO.Path]::GetFullPath('%~dp0').TrimEnd([char]'\'); try {$h=Invoke-RestMethod -Uri '%URL%/api/health' -TimeoutSec 2; if ([IO.Path]::GetFullPath($h.project_root).TrimEnd([char]'\') -ieq $expected) {exit 0}} catch {}; exit 1" >nul 2>nul
 if not errorlevel 1 goto ready
 set /a ATTEMPTS+=1
 if %ATTEMPTS% GEQ 30 goto startup_failed
